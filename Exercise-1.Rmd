@@ -1,0 +1,58 @@
+---
+title: "Exercise 1"
+output:
+  html_document:
+    toc: yes
+    toc_float: yes
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## About the Course
+### 1
+The external validity of results that are based on a particular sample is much weaker in the social sciences than in the cases where ML has been used extensively (i.e. the stable DGP assumption is more severely violated). This means that the predictive power of ML here will be weaker.
+
+### 2
+An interpretation of regression coefficients as causal depends on a theoretical model with which they are consistent. In ML, the goal is to maximize prediction independently of a theoretical model, and with an explicit acceptance that the "model" used will be biased and that it will often be uninterpretable.
+
+### 3
+* Linearity: a change in x changes y by a constant amount for every value of x (note: this refers to linearity in parameters. Non-linear functions of a variable may be included, but these functions are then in a linear relationship with y).
+* Separability: additive separability means, as the name suggests, that all arguments of the function are separated by a plus/minus sign. This means that the cross partial derivatives are zero, and it is possible to discuss a marginal effect of a variable that is independent of other variables.
+* $X \sim \mathcal{N}(\mu, \sigma^2)$: $X$ is distributed normally with mean $\mu$ and variance $\sigma^2$.
+
+
+## The "Tidyverse"
+
+### 1
+```{r, results='hide', message=FALSE}
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load(tidyverse, kableExtra)
+```
+
+### 2
+```{r}
+data("iris")
+
+kable(iris %>%
+        select(starts_with("s")) %>%
+        group_by(Species) %>%
+        summarize(Average_Sepal_Length = mean(Sepal.Length)),
+       format = "simple")
+```
+
+### 3
+```{r}
+data("mtcars")
+mtcars$cyl <- as_factor(mtcars$cyl)
+
+ggplot(mtcars, aes(hp, mpg, color = cyl)) +
+  geom_point() +
+  geom_smooth(method = lm)
+```
+
+
+## Git & GitHub
+Done manually. Can be viewed on <https://raw.githack.com/yotamnir/Machine-Learning-for-Economists/main/Exercise-1.html>.
