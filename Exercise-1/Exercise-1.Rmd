@@ -5,6 +5,7 @@ output:
     toc: yes
     toc_float: yes
     code_folding: show
+geometry: "margin=3cm"
 ---
 
 ```{r setup, include=FALSE}
@@ -55,4 +56,4 @@ ggplot(mtcars, aes(hp, mpg, color = cyl)) +
 
 
 ## Git & GitHub
-Done manually. Can be viewed on <https://raw.githack.com/yotamnir/Machine-Learning-for-Economists/main/Exercise-1.html>.
+Done manually. Can be viewed on <https://raw.githack.com/yotamnir/Machine-Learning-for-Economists/main/Exercise-1/Exercise-1.html>.
