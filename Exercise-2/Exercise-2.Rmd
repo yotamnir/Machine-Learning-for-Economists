@@ -1,0 +1,84 @@
+---
+title: "Exercise 2"
+author: '205560121'
+date: "17 4 2021"
+output:
+  html_document:
+    toc: yes
+    toc_float: yes
+    toc_depth: 4
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Linear Regression
+### Preface
+We cannot use the data for prediction without assumptions, because some assumptions regarding the data generating process are needed in order to give credibility to the external validity of our results.
+
+#### Separability
+The addition of interactions (and in general of additional variables which are functions of original variables) increases the variance of the estimates, thus decreasing their credibility when making predictions.
+
+#### Normal Distribution of $E(u|X)$
+##### 1
+  * $E(u|X) = 0$: the assumption that the expectation of $u$ is zero is innocuous, and can be ensured by choosing the right constant (i.e. $\beta_0$). The assumption that $u$ is mean independent of $X$ is stronger and is never likely to be correct, since there are always likely to be certain unobserved variables that are correlated both with $y$ and with one of the $x$'s. A popular example is "ability bias" in Mincer equations.
+  * Normal distribution: this is often a reasonable assumption, both asymptotically and because a random variable that is constructed from a variety of other random variables, such as $u$, tends to be normally distributed. Still, we could imagine a particularly dominant factor in $u$ the distribution of which is not normal and which doesn't quickly converge asymptotically to normal.
+  * Heteroskedasticity: homoskedasticity does not seem to be a reasonable default assumption. It is often even necessarily wrong, as in the case of binary outcome variables.
+
+##### 2 
+
+
+
+
+### Data
+##### 1
+```{r Loading Packages and Data, results='hide', message=FALSE}
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load(tidyverse, DataExplorer, tidymodels, kableExtra)
+winequality <- read.csv("winequality_red.csv") %>%
+  as_tibble()
+```
+
+##### 2
+```{r Plots}
+plot_histogram(winequality)
+plot_boxplot(winequality, by = "quality")
+```
+
+### Model
+##### 1
+```{r Train/test split}
+set.seed(100)
+winequality_split <- winequality %>%
+  initial_split(prop = 0.7)
+wine_train <- training(winequality_split)
+wine_test <- testing(winequality_split)
+```
+
+##### 2
+```{r Linear model}
+wine_rec <- recipe(quality ~ ., data = wine_train)
+wine_rec
+
+
+#linear_wine <- (lm(quality ~ ., data = wine_train))
+#summary(linear_wine)
+```
+
+##### 3
+*Note:* there seems to be a difference between the results displayed here and those in the exercise instructions. Do you recognize the source of the difference?
+```{r Predictions of linear model}
+wine_pred <- linear_wine %>%
+  predict(new_data = wine_test) %>%
+  bind_cols(wine_test)
+head(round(wine_pred))
+```
+
+##### 4
+```{r}
+wine_pred %>%
+  rmse()
+```
+
