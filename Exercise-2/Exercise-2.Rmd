@@ -1,6 +1,6 @@
 ---
 title: "Exercise 2"
-author: '205560121'
+author: 'Yotam Nir'
 date: "17 4 2021"
 output:
   html_document:

@@ -1,0 +1,17 @@
+---
+title: "Exercise 3"
+author: 'Yotam Nir'
+date: "9 5 2021"
+output:
+  html_document:
+    toc: yes
+    toc_float: yes
+    toc_depth: 4
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## 
