@@ -1,0 +1,51 @@
+---
+title: "Text Mining Assignment"
+author: "Yotam Nir"
+date: "15 6 2021"
+output:
+  html_document:
+    toc: yes
+    toc_float: yes
+    toc_depth: 4
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Libraries and Data
+```{r load packages and data, results='hide', message=FALSE}
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load(tidyverse,
+               gutenbergr,
+               magrittr,
+               tidytext,
+               scales,
+               igraph,
+               ggraph,
+               topicmodels)
+
+marktwain <- gutenberg_works(author == "Twain, Mark")
+lewiscarrol <- gutenberg_works(author == "Carroll, Lewis")
+
+aliceinwonderland <- gutenberg_download(11)
+throughthelookingglass <- gutenberg_download(12)
+tomsawyer <- gutenberg_download(74)
+huckleberryfinn <- gutenberg_download(76)
+connecticutyankee <- gutenberg_download(86)
+innocentsabroad <- gutenberg_download(3176)
+countofmontecristo <- gutenberg_download(1184)
+```
+
+### Tokens and Stop Words
+
+##### Question 1
+
+```{r}
+unnest_tokens(aliceinwonderland, word, text)
+data("stop_words")
+```
+
+
+
