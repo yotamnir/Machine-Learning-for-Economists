@@ -263,13 +263,12 @@ div.tocify {
 <h3>Loading packages and data</h3>
 <p>Loading the relevant packages and the training data:</p>
 <pre class="r"><code>if (!require(&quot;pacman&quot;)) install.packages(&quot;pacman&quot;)
-pacman::p_load(tidyverse, tidymodels, kableExtra, glmnet, ranger, vip)
+pacman::p_load(tidyverse, tidymodels, kableExtra, glmnet, ranger, vip, xgboost)
 PSID &lt;- read.csv(&quot;train.csv&quot;) %&gt;%
   as_tibble() %&gt;%
   select(-farmer)   # removed because there are no occurrences in the data</code></pre>
-</div>
-<div id="brief-data-exploration" class="section level3">
-<h3>Brief Data Exploration</h3>
+<div id="brief-data-exploration" class="section level4">
+<h4>Brief Data Exploration</h4>
 <p>Most of the data exploration is not documented here. Some objects are created here for my own convenience as references. The following block creates a tibble with summary statistics of the variables, and a correlations matrix:</p>
 <pre class="r"><code>summary_stats &lt;- tibble(mean = sapply(PSID, mean),
                         sd = sapply(PSID, sd))
@@ -306,13 +305,15 @@ colnames(by_occupation) &lt;- c(&quot;m_wage&quot;, &quot;v_wage&quot;, &quot;n&
   filter(female == 1)
 #ggplot(h_female, aes(edyrs, wagediff)) + geom_path()</code></pre>
 </div>
+</div>
 <div id="creating-splits-and-features" class="section level3">
 <h3>Creating splits and features</h3>
 <p>Here I split the sample 80/20 to train and test, as a first step for my own reference (I should use the full training set when submitting my estimations), and split into five folds.</p>
 <p>I also experiment with some features which may improve predictive ability.</p>
-<pre class="r"><code>seed &lt;- 1111
+<pre class="r"><code>seed &lt;- 1310
 set.seed(seed)
-# Experimenting with different features - the more I add the worse it usually becomes both for regularized regressions and for random forest (for random forest this makes sense, for the regressions I&#39;m not sure why)
+
+# Adding various features constructed from the data
 PSID1 &lt;- PSID %&gt;% mutate(edfemale = as.numeric(edyrs &lt; 14) * female,
                          lowskill = healthsupport + building + foodcare + transport + production + constructextractinstall + protective + officeadmin + sales,
                          medskill = healthcare + business + architect + socialworker,
@@ -321,21 +322,13 @@ PSID1 &lt;- PSID %&gt;% mutate(edfemale = as.numeric(edyrs &lt; 14) * female,
                          managerskill = manager * edyrs,
                          productionf = production * female,
                          officef = officeadmin * female)
-#                         xa = x0 * female)
-#                         x1 = female * expf,
- #                        x2 = female * edyrs,
-  #                       x3 = female * expp,
-   #                      x4 = expf * colldeg,
-    #                     x5 = black * expf,
-     #                    x6 = black * edyrs,
-      #                   x7 = black * expp)
+
 # Split
 split &lt;- PSID1 %&gt;%
   initial_split(prop = 0.8)
 train &lt;- training(split)
 test &lt;- testing(split)
-folds &lt;- train %&gt;% vfold_cv(v = 5)
-#fancyRpartPlot(rpart(formula_full, train, method = &quot;anova&quot;))</code></pre>
+folds &lt;- train %&gt;% vfold_cv(v = 5)</code></pre>
 </div>
 <div id="regularized-regression" class="section level3">
 <h3>Regularized Regression</h3>
@@ -354,11 +347,10 @@ en0.5_mod &lt;- linear_reg() %&gt;%
   set_mode(&quot;regression&quot;)</code></pre>
 <p>Specifying a recipe to be used for all three models (using the training subset; should be changed before submission):</p>
 <pre class="r"><code>recipe &lt;- recipe(lnwage ~ ., data = train) %&gt;%
-  #step_rm(ID) %&gt;%     # since ID is with high confidence uninformative
   step_center(all_predictors()) %&gt;% 
   step_scale(all_predictors()) %&gt;% 
   step_zv(all_predictors()) %&gt;%
-  step_rm(ID)</code></pre>
+  step_rm(ID)     # since ID is with high confidence uninformative</code></pre>
 <p>Specifying workflows for each model:</p>
 <pre class="r"><code>lasso_wf &lt;- workflow() %&gt;%
   add_recipe(recipe) %&gt;%
@@ -425,31 +417,33 @@ en0.5_bake &lt;- en0.5_rec_final %&gt;%
   bake(new_data = test)</code></pre>
 <p>Fitting the models to the training sets and creating predictions for the train and test sets:</p>
 <pre class="r"><code># In-sample predictions
-#lasso_train_pred &lt;- lasso_mod_final %&gt;%
-#  fit(lnwage ~ ., data = lasso_juice) %&gt;%
-#  predict(new_data = lasso_juice) %&gt;%
-#  rename(lasso_train_pred = .pred)
-#ridge_train_pred &lt;- ridge_mod_final %&gt;%
-#  fit(lnwage ~ ., data = ridge_juice) %&gt;%
-#  predict(new_data = ridge_juice) %&gt;%
-#  rename(ridge_train_pred = .pred)
-#en0.5_train_pred &lt;- en0.5_mod_final %&gt;%
-#  fit(lnwage ~ ., data = en0.5_juice) %&gt;%
-#  predict(new_data = en0.5_juice) %&gt;%
-#  rename(en0.5_train_pred = .pred)
-#reg_train_preds &lt;- bind_cols(train, lasso_train_pred, ridge_train_pred, #en0.5_train_pred) %&gt;%
-#  select(ID, lnwage, lasso_train_pred, ridge_train_pred, en0.5_train_pred) %&gt;%
-#  mutate(
-#    avg_regularized_pred = (lasso_train_pred + ridge_train_pred + en0.5_train_pred) / 3,
-#    lasso_sqerror = (lnwage - lasso_train_pred)^2,
-#    ridge_sqerror = (lnwage - ridge_train_pred)^2,
-#    en0.5_sqerror = (lnwage - en0.5_train_pred)^2,
-#    avg_reg_sqerror = (lnwage - avg_regularized_pred)^2
-#  )
-# rmse
-#sapply(reg_train_preds, function(rmse) sqrt(mean(rmse)))[7:10]
+lasso_train_pred &lt;- lasso_mod_final %&gt;%
+  fit(lnwage ~ ., data = lasso_juice) %&gt;%
+  predict(new_data = lasso_juice) %&gt;%
+  rename(lasso_train_pred = .pred)
+ridge_train_pred &lt;- ridge_mod_final %&gt;%
+  fit(lnwage ~ ., data = ridge_juice) %&gt;%
+  predict(new_data = ridge_juice) %&gt;%
+  rename(ridge_train_pred = .pred)
+en0.5_train_pred &lt;- en0.5_mod_final %&gt;%
+  fit(lnwage ~ ., data = en0.5_juice) %&gt;%
+  predict(new_data = en0.5_juice) %&gt;%
+  rename(en0.5_train_pred = .pred)
+reg_train_preds &lt;- bind_cols(train, lasso_train_pred, ridge_train_pred, en0.5_train_pred) %&gt;%
+  select(ID, lnwage, lasso_train_pred, ridge_train_pred, en0.5_train_pred) %&gt;%
+  mutate(
+    avg_regularized_pred = 0.85 * lasso_train_pred + 0.05 * ridge_train_pred + 0.1 * en0.5_train_pred,
+    lasso_sqerror = (lnwage - lasso_train_pred)^2,
+    ridge_sqerror = (lnwage - ridge_train_pred)^2,
+    en0.5_sqerror = (lnwage - en0.5_train_pred)^2,
+    avg_reg_sqerror = (lnwage - avg_regularized_pred)^2
+  )
 
-# Out-of-sample predictions
+# MSE
+sapply(reg_train_preds, function(rmse) mean(rmse))[7:10]</code></pre>
+<pre><code>##   lasso_sqerror   ridge_sqerror   en0.5_sqerror avg_reg_sqerror 
+##       0.1523806       0.1450522       0.1447349       0.1507958</code></pre>
+<pre class="r"><code># Out-of-sample predictions
 lasso_test_pred &lt;- lasso_mod_final %&gt;%
   fit(lnwage ~ ., data = lasso_juice) %&gt;%
   predict(new_data = lasso_bake) %&gt;%
@@ -465,62 +459,433 @@ en0.5_test_pred &lt;- en0.5_mod_final %&gt;%
 reg_test_preds &lt;- bind_cols(test, lasso_test_pred, ridge_test_pred, en0.5_test_pred) %&gt;%
   select(ID, lnwage, lasso_test_pred, ridge_test_pred, en0.5_test_pred) %&gt;%
   mutate(
-    avg_regularized_pred = (lasso_test_pred + ridge_test_pred + en0.5_test_pred) / 3,
+    avg_regularized_pred = 0.85 * lasso_test_pred + 0.05 * ridge_test_pred + 0.1 * en0.5_test_pred,
     lasso_sqerror = (lnwage - lasso_test_pred)^2,
     ridge_sqerror = (lnwage - ridge_test_pred)^2,
     en0.5_sqerror = (lnwage - en0.5_test_pred)^2,
     avg_reg_sqerror = (lnwage - avg_regularized_pred)^2
   )
-# rmse
-sapply(reg_test_preds, function(rmse) sqrt(mean(rmse)))[7:10]</code></pre>
+
+# MSE
+sapply(reg_test_preds, function(rmse) mean(rmse))[7:10]</code></pre>
 <pre><code>##   lasso_sqerror   ridge_sqerror   en0.5_sqerror avg_reg_sqerror 
-##       0.4230340       0.4245565       0.4248876       0.4232697</code></pre>
+##       0.1573012       0.1609223       0.1555982       0.1567307</code></pre>
+<p>Note that since lasso does especially well at prediction – particularly in this case where many of the variables are of low significance to the regression – I give it the majority of the weight in the average prediction.</p>
 </div>
-<div id="forests" class="section level3">
-<h3>Forests</h3>
-<p>Creating the RF object, for now using only the training set (note, I leave out the ‘edfemale’ and ‘managerskill’ variables constructed earlier so that the trees can generate their own interactions):</p>
+<div id="random-forest" class="section level3">
+<h3>Random Forest</h3>
+<p>Creating the RF object, for now using only the smaller training set (note, I leave out the interaction variables constructed earlier so that the trees can generate their own interactions):</p>
 <pre class="r"><code>set.seed(seed)
+
 rf_fit &lt;- ranger(
-  formula = lnwage ~ . -ID - edfemale -managerskill,
+  formula = lnwage ~ . -ID - edfemale -managerskill -productionf -officef,
   data = train,
   #mtry = default (square root of number of variables rounded down)
   num.trees = 1000,
   importance = &quot;impurity&quot;
 )</code></pre>
-<p>Predicting test set values:</p>
-<pre class="r"><code>#rf_train_pred &lt;- as_tibble(predict(rf_fit, data = train)$predictions) %&gt;%
-#  rename(rf_train_pred = value) %&gt;%
-#  bind_cols(train) %&gt;%
-#  select(ID, lnwage, rf_train_pred) %&gt;%
-#  mutate(rf_sqerror = (lnwage - rf_train_pred)^2)
-#sqrt(mean(rf_train_pred$rf_sqerror))
+<p>Predicting training and test set values:</p>
+<pre class="r"><code># In sample predictions
+rf_train_pred &lt;- as_tibble(predict(rf_fit, data = train)$predictions) %&gt;%
+  rename(rf_train_pred = value) %&gt;%
+  bind_cols(train) %&gt;%
+  select(ID, lnwage, rf_train_pred) %&gt;%
+  mutate(rf_sqerror = (lnwage - rf_train_pred)^2)
+mean(rf_train_pred$rf_sqerror)</code></pre>
+<pre><code>## [1] 0.07071893</code></pre>
+<pre class="r"><code># Out of sample predictions
 rf_test_pred &lt;- as_tibble(predict(rf_fit, data = test)$predictions) %&gt;%
   rename(rf_test_pred = value) %&gt;%
   bind_cols(test) %&gt;%
   select(ID, lnwage, rf_test_pred) %&gt;%
   mutate(rf_sqerror = (lnwage - rf_test_pred)^2)
-sqrt(mean(rf_test_pred$rf_sqerror))</code></pre>
-<pre><code>## [1] 0.4232489</code></pre>
-<p>The out of sample RMSE is very similar to that obtained using regularized regressions.</p>
+mean(rf_test_pred$rf_sqerror)</code></pre>
+<pre><code>## [1] 0.1460328</code></pre>
+<p>The out of sample MSE is quite similar to that obtained using regularized regressions.</p>
 </div>
-<div id="averaging-the-estimates-of-both-methods" class="section level3">
-<h3>Averaging the estimates of both methods</h3>
-<pre class="r"><code>#train_preds &lt;- left_join(
-#  reg_train_preds,
-#  rf_train_pred
-#) %&gt;%
-#  mutate(avg_sqerror = (avg_reg_sqerror + rf_sqerror)/2)
-#sapply(train_preds, function(rmse) sqrt(mean(rmse)))[c(7:10, 12:13)]
+<div id="gradient-boosting" class="section level3">
+<h3>Gradient Boosting</h3>
+<p>The implementation of gradient boosting here closely follows the tutorial on <a href="http://uc-r.github.io/gbm_regression" class="uri">http://uc-r.github.io/gbm_regression</a>.</p>
+<p>We begin by tuning the hyperparameters:</p>
+<pre class="r"><code># Creating a hyperparameter grid
+hyper_grid &lt;-  expand.grid(     
+  eta = c(.01, .05, .1, .3),
+  max_depth = c(1, 3, 5, 7),
+  min_child_weight = c(1, 3, 5, 7),
+  subsample = c(.65, .8, 1),
+  colsample_bytree = c(.8, .9, 1),
+  optimal_trees = 0,  # will store results here
+  min_rmse = 0        # will store results here
+)
+
+# Grid search
+for (i in 1:nrow(hyper_grid)){
+  set.seed(seed)
+  
+  # Training the models
+  xgb_tune &lt;- xgb.cv(
+    data = as.matrix(train %&gt;% select(-c(&quot;ID&quot;, &quot;lnwage&quot;))),
+    label = as.matrix(train$lnwage),
+    nrounds = 1000,
+    nfold = 5,
+    metrics = &quot;rmse&quot;,
+    verbose = 0,
+    early_stopping_rounds = 10,  # stop if no improvement for 10 consecutive trees
+    params = list(
+     eta = hyper_grid$eta[i],
+      max_depth = hyper_grid$max_depth[i],
+      min_child_weight = hyper_grid$min_child_weight[i],
+      subsample = hyper_grid$subsample[i],
+      colsample_bytree = hyper_grid$colsample_bytree[i]
+     )
+  )
+  
+  # Adding the error and tree number to the grid
+  hyper_grid$optimal_trees[i] &lt;- which.min(xgb_tune$evaluation_log$test_rmse_mean)
+  hyper_grid$min_rmse[i] &lt;- min(xgb_tune$evaluation_log$test_rmse_mean)
+}
+
+# Taking the parameters with the lowest rmse, and fitting the model with them
+min_rmse &lt;- which.min(hyper_grid$min_rmse)
+
+set.seed(seed)
+xgb_fit_tuned &lt;- xgboost(
+  data = as.matrix(train %&gt;% select(-c(&quot;ID&quot;, &quot;lnwage&quot;))),
+  label = as.matrix(train$lnwage),
+  nrounds = hyper_grid$optimal_trees[min_rmse],
+  verbose = 0,
+  early_stopping_rounds = 10,
+  params = list(
+    eta = hyper_grid$eta[min_rmse],
+    max_depth = hyper_grid$max_depth[min_rmse],
+    min_child_weight = hyper_grid$min_child_weight[min_rmse],
+    subsample = hyper_grid$subsample[min_rmse],
+    colsample_bytree = hyper_grid$colsample_bytree[min_rmse]
+   )
+)</code></pre>
+<p>We can now use our tuned model to generate predictions:</p>
+<pre class="r"><code># Predicting in sample
+xgb_train_pred &lt;- as_tibble(predict(xgb_fit_tuned, as.matrix(train %&gt;% select(-c(&quot;ID&quot;, &quot;lnwage&quot;))))) %&gt;%
+  rename(xgb_pred = value) %&gt;%
+  bind_cols(train) %&gt;%
+  select(ID, lnwage, xgb_pred) %&gt;%
+  mutate(xgb_sqerror = (lnwage - xgb_pred)^2)
+mean(xgb_train_pred$xgb_sqerror)</code></pre>
+<pre><code>## [1] 0.1416879</code></pre>
+<pre class="r"><code># Predicting out of sample
+xgb_test_pred &lt;- as_tibble(predict(xgb_fit_tuned, as.matrix(test %&gt;% select(-c(&quot;ID&quot;, &quot;lnwage&quot;))))) %&gt;%
+  rename(xgb_pred = value) %&gt;%
+  bind_cols(test) %&gt;%
+  select(ID, lnwage, xgb_pred) %&gt;%
+  mutate(xgb_sqerror = (lnwage - xgb_pred)^2)
+mean(xgb_test_pred$xgb_sqerror)</code></pre>
+<pre><code>## [1] 0.158158</code></pre>
+<p>Following several iterations, it appears that boosting does slightly better than the previous methods on average, but there doesn’t appear to be any significant difference.</p>
+</div>
+<div id="averaging-the-estimates-of-all-methods" class="section level3">
+<h3>Averaging the estimates of all methods</h3>
+<pre class="r"><code># In sample predictions
+train_preds &lt;- left_join(
+  reg_train_preds,
+  rf_train_pred
+) %&gt;% 
+  left_join(
+    xgb_train_pred
+  ) %&gt;%
+  mutate(
+    avg_pred = (avg_regularized_pred + rf_train_pred + xgb_pred)/3,
+    avg_sqerror = (lnwage - avg_pred)^2
+  )
+sapply(train_preds, function(rmse) mean(rmse))[c(7:10, 12, 14, 16)]</code></pre>
+<pre><code>##   lasso_sqerror   ridge_sqerror   en0.5_sqerror avg_reg_sqerror      rf_sqerror 
+##      0.15238057      0.14505217      0.14473487      0.15079584      0.07071893 
+##     xgb_sqerror     avg_sqerror 
+##      0.14168789      0.11464910</code></pre>
+<pre class="r"><code># Out of sample predictions
 test_preds &lt;- left_join(
   reg_test_preds,
   rf_test_pred
-) %&gt;%
-  mutate(avg_sqerror = (avg_reg_sqerror + rf_sqerror)/2)
-sapply(test_preds, function(rmse) sqrt(mean(rmse)))[c(7:10, 12:13)]</code></pre>
+) %&gt;% 
+  left_join(
+    xgb_test_pred
+  ) %&gt;%
+  mutate(
+    avg_pred = (avg_regularized_pred + rf_test_pred + xgb_pred)/3,
+    avg_sqerror = (lnwage - avg_pred)^2
+  )
+sapply(test_preds, function(rmse) mean(rmse))[c(7:10, 12, 14, 16)]</code></pre>
 <pre><code>##   lasso_sqerror   ridge_sqerror   en0.5_sqerror avg_reg_sqerror      rf_sqerror 
-##       0.4230340       0.4245565       0.4248876       0.4232697       0.4232489 
-##     avg_sqerror 
-##       0.4232593</code></pre>
+##       0.1573012       0.1609223       0.1555982       0.1567307       0.1460328 
+##     xgb_sqerror     avg_sqerror 
+##       0.1581580       0.1496361</code></pre>
+</div>
+<div id="final-predictions" class="section level3">
+<h3>Final Predictions</h3>
+<p>We now apply the methods to the full training set in order to generate predictions for the test set, which we load (and fit with the relevant features) below:</p>
+<pre class="r"><code>PSID_test &lt;- read.csv(&quot;test.csv&quot;) %&gt;%
+  as_tibble() %&gt;%
+  select(-farmer) %&gt;%
+  mutate(edfemale = as.numeric(edyrs &lt; 14) * female,
+                         lowskill = healthsupport + building + foodcare + transport + production + constructextractinstall + protective + officeadmin + sales,
+                         medskill = healthcare + business + architect + socialworker,
+                         highskill = financialop + computer + legaleduc + postseceduc + lawyerphysician,
+                         white = 1 - (black + hisp + otherrace),
+                         managerskill = manager * edyrs,
+                         productionf = production * female,
+                         officef = officeadmin * female)</code></pre>
+<div id="regression" class="section level4">
+<h4>Regression</h4>
+<p>Specifying a recipe to be used for all three models (using the training subset; should be changed before submission):</p>
+<pre class="r"><code>recipe &lt;- recipe(lnwage ~ ., data = PSID1) %&gt;%
+  step_center(all_predictors()) %&gt;% 
+  step_scale(all_predictors()) %&gt;% 
+  step_zv(all_predictors()) %&gt;%
+  step_rm(ID)     # since ID is with high confidence uninformative</code></pre>
+<p>Specifying workflows for each model:</p>
+<pre class="r"><code>lasso_wf &lt;- workflow() %&gt;%
+  add_recipe(recipe) %&gt;%
+  add_model(lasso_mod)
+ridge_wf &lt;- workflow() %&gt;%
+  add_recipe(recipe) %&gt;%
+  add_model(ridge_mod)
+en0.5_wf &lt;- workflow() %&gt;%
+  add_recipe(recipe) %&gt;%
+  add_model(en0.5_mod)</code></pre>
+<p>Tuning lambda in each model and taking the 1se lambda:</p>
+<pre class="r"><code>folds &lt;- PSID1 %&gt;% vfold_cv(v = 5)
+
+lasso_1se &lt;- lasso_wf %&gt;%
+    tune_grid(resamples = folds) %&gt;%
+    select_best(metric = &quot;rmse&quot;) %&gt;%
+    select(penalty)
+ridge_1se &lt;- ridge_wf %&gt;%
+    tune_grid(resamples = folds) %&gt;%
+    select_best(metric = &quot;rmse&quot;) %&gt;%
+    select(penalty)
+en0.5_1se &lt;- en0.5_wf %&gt;%
+    tune_grid(resamples = folds) %&gt;%
+    select_best(metric = &quot;rmse&quot;) %&gt;%
+    select(penalty)</code></pre>
+<p>Finalizing the models, recipes and workflows:</p>
+<pre class="r"><code># Models
+lasso_mod_final &lt;- lasso_mod %&gt;%
+  finalize_model(lasso_1se)
+ridge_mod_final &lt;- ridge_mod %&gt;%
+  finalize_model(ridge_1se)
+en0.5_mod_final &lt;- en0.5_mod %&gt;%
+  finalize_model(en0.5_1se)
+# Recipes
+lasso_rec_final &lt;- recipe %&gt;%
+  finalize_recipe(lasso_1se)
+ridge_rec_final &lt;- recipe %&gt;%
+  finalize_recipe(ridge_1se)
+en0.5_rec_final &lt;- recipe %&gt;%
+  finalize_recipe(en0.5_1se)
+# Workflows
+lasso_wf_final &lt;- lasso_wf %&gt;%
+  finalize_workflow(lasso_1se)
+ridge_wf_final &lt;- ridge_wf %&gt;%
+  finalize_workflow(ridge_1se)
+en0.5_wf_final &lt;- en0.5_wf %&gt;%
+  finalize_workflow(en0.5_1se)</code></pre>
+<p>Applying the recipes to the train and test set:</p>
+<pre class="r"><code>lasso_juice &lt;- lasso_rec_final %&gt;%
+  prep() %&gt;%
+  juice()
+ridge_juice &lt;- ridge_rec_final %&gt;%
+  prep() %&gt;%
+  juice()
+en0.5_juice &lt;- en0.5_rec_final %&gt;%
+  prep() %&gt;%
+  juice()
+lasso_bake &lt;- lasso_rec_final %&gt;%
+  prep() %&gt;%
+  bake(new_data = PSID_test)
+ridge_bake &lt;- ridge_rec_final %&gt;%
+  prep() %&gt;%
+  bake(new_data = PSID_test)
+en0.5_bake &lt;- en0.5_rec_final %&gt;%
+  prep() %&gt;%
+  bake(new_data = PSID_test)</code></pre>
+<p>Fitting the models to the training sets and creating predictions for the train and test sets:</p>
+<pre class="r"><code># In-sample predictions
+lasso_train_pred &lt;- lasso_mod_final %&gt;%
+  fit(lnwage ~ ., data = lasso_juice) %&gt;%
+  predict(new_data = lasso_juice) %&gt;%
+  rename(lasso_train_pred = .pred)
+ridge_train_pred &lt;- ridge_mod_final %&gt;%
+  fit(lnwage ~ ., data = ridge_juice) %&gt;%
+  predict(new_data = ridge_juice) %&gt;%
+  rename(ridge_train_pred = .pred)
+en0.5_train_pred &lt;- en0.5_mod_final %&gt;%
+  fit(lnwage ~ ., data = en0.5_juice) %&gt;%
+  predict(new_data = en0.5_juice) %&gt;%
+  rename(en0.5_train_pred = .pred)
+reg_train_preds &lt;- bind_cols(PSID1, lasso_train_pred, ridge_train_pred, en0.5_train_pred) %&gt;%
+  select(ID, lnwage, lasso_train_pred, ridge_train_pred, en0.5_train_pred) %&gt;%
+  mutate(
+    avg_regularized_pred = 0.85 * lasso_train_pred + 0.05 * ridge_train_pred + 0.1 * en0.5_train_pred,
+    lasso_sqerror = (lnwage - lasso_train_pred)^2,
+    ridge_sqerror = (lnwage - ridge_train_pred)^2,
+    en0.5_sqerror = (lnwage - en0.5_train_pred)^2,
+    avg_reg_sqerror = (lnwage - avg_regularized_pred)^2
+  )
+
+# MSE
+sapply(reg_train_preds, function(rmse) mean(rmse))[7:10]</code></pre>
+<pre><code>##   lasso_sqerror   ridge_sqerror   en0.5_sqerror avg_reg_sqerror 
+##       0.1417618       0.1430389       0.1414434       0.1417467</code></pre>
+<pre class="r"><code># Out-of-sample predictions
+lasso_test_pred &lt;- lasso_mod_final %&gt;%
+  fit(lnwage ~ ., data = lasso_juice) %&gt;%
+  predict(new_data = lasso_bake) %&gt;%
+  rename(lasso_test_pred = .pred)
+ridge_test_pred &lt;- ridge_mod_final %&gt;%
+  fit(lnwage ~ ., data = ridge_juice) %&gt;%
+  predict(new_data = ridge_bake) %&gt;%
+  rename(ridge_test_pred = .pred)
+en0.5_test_pred &lt;- en0.5_mod_final %&gt;%
+  fit(lnwage ~ ., data = en0.5_juice) %&gt;%
+  predict(new_data = en0.5_bake) %&gt;%
+  rename(en0.5_test_pred = .pred)
+reg_test_preds &lt;- bind_cols(PSID_test, lasso_test_pred, ridge_test_pred, en0.5_test_pred) %&gt;%
+  select(ID, lasso_test_pred, ridge_test_pred, en0.5_test_pred) %&gt;%
+  mutate(avg_regularized_pred = 0.85 * lasso_test_pred + 0.05 * ridge_test_pred + 0.1 * en0.5_test_pred)</code></pre>
+</div>
+<div id="random-forest-1" class="section level4">
+<h4>Random Forest</h4>
+<p>Creating the model:</p>
+<pre class="r"><code>set.seed(seed)
+
+rf_fit &lt;- ranger(
+  formula = lnwage ~ . -ID - edfemale -managerskill -productionf -officef,
+  data = PSID1,
+  #mtry = default (square root of number of variables rounded down)
+  num.trees = 1000,
+  importance = &quot;impurity&quot;
+)</code></pre>
+<p>Predicting training and test set values:</p>
+<pre class="r"><code># In sample predictions
+rf_train_pred &lt;- as_tibble(predict(rf_fit, data = PSID1)$predictions) %&gt;%
+  rename(rf_train_pred = value) %&gt;%
+  bind_cols(PSID1) %&gt;%
+  select(ID, lnwage, rf_train_pred) %&gt;%
+  mutate(rf_sqerror = (lnwage - rf_train_pred)^2)
+mean(rf_train_pred$rf_sqerror)</code></pre>
+<pre><code>## [1] 0.06931694</code></pre>
+<pre class="r"><code># Out of sample predictions
+rf_test_pred &lt;- as_tibble(predict(rf_fit, data = PSID_test)$predictions) %&gt;%
+  rename(rf_test_pred = value) %&gt;%
+  bind_cols(PSID_test) %&gt;%
+  select(ID, rf_test_pred)</code></pre>
+</div>
+<div id="gradient-boosting-1" class="section level4">
+<h4>Gradient Boosting</h4>
+<p>We repeat the calculations, this time for the full training set:</p>
+<pre class="r"><code># Creating a hyperparameter grid
+hyper_grid_final &lt;-  expand.grid(     
+  eta = c(.01, .05, .1, .3),
+  max_depth = c(1, 3, 5, 7),
+  min_child_weight = c(1, 3, 5, 7),
+  subsample = c(.65, .8, 1),
+  colsample_bytree = c(.8, .9, 1),
+  optimal_trees = 0,  # will store results here
+  min_rmse = 0        # will store results here
+)
+
+# Grid search
+for (i in 1:nrow(hyper_grid_final)){
+  set.seed(seed)
+  
+  # Training the models
+  xgb_tune &lt;- xgb.cv(
+    data = as.matrix(PSID1 %&gt;% select(-c(&quot;ID&quot;, &quot;lnwage&quot;))),
+    label = as.matrix(PSID1$lnwage),
+    nrounds = 1000,
+    nfold = 5,
+    metrics = &quot;rmse&quot;,
+    verbose = 0,
+    early_stopping_rounds = 10,  # stop if no improvement for 10 consecutive trees
+    params = list(
+      eta = hyper_grid_final$eta[i],
+      max_depth = hyper_grid_final$max_depth[i],
+      min_child_weight = hyper_grid_final$min_child_weight[i],
+      subsample = hyper_grid_final$subsample[i],
+      colsample_bytree = hyper_grid_final$colsample_bytree[i]
+     )
+  )
+  
+  # Adding the error and tree number to the grid
+  hyper_grid_final$optimal_trees[i] &lt;- which.min(xgb_tune$evaluation_log$test_rmse_mean)
+  hyper_grid_final$min_rmse[i] &lt;- min(xgb_tune$evaluation_log$test_rmse_mean)
+}
+
+# Taking the parameters with the lowest rmse, and fitting the model with them
+min_rmse &lt;- which.min(hyper_grid_final$min_rmse)
+
+set.seed(seed)
+xgb_fit_final &lt;- xgboost(
+  data = as.matrix(PSID1 %&gt;% select(-c(&quot;ID&quot;, &quot;lnwage&quot;))),
+  label = as.matrix(PSID1$lnwage),
+  nrounds = hyper_grid_final$optimal_trees[min_rmse],
+  verbose = 0,
+  early_stopping_rounds = 10,
+  params = list(
+    eta = hyper_grid_final$eta[min_rmse],
+    max_depth = hyper_grid_final$max_depth[min_rmse],
+    min_child_weight = hyper_grid_final$min_child_weight[min_rmse],
+    subsample = hyper_grid_final$subsample[min_rmse],
+    colsample_bytree = hyper_grid_final$colsample_bytree[min_rmse]
+   )
+)</code></pre>
+<p>We can now use our tuned model to generate predictions:</p>
+<pre class="r"><code># Predicting in sample
+xgb_train_pred &lt;- as_tibble(predict(xgb_fit_tuned, as.matrix(PSID1 %&gt;% select(-c(&quot;ID&quot;, &quot;lnwage&quot;))))) %&gt;%
+  rename(xgb_pred = value) %&gt;%
+  bind_cols(PSID1) %&gt;%
+  select(ID, lnwage, xgb_pred) %&gt;%
+  mutate(xgb_sqerror = (lnwage - xgb_pred)^2)
+mean(xgb_train_pred$xgb_sqerror)</code></pre>
+<pre><code>## [1] 0.1449654</code></pre>
+<pre class="r"><code># Predicting out of sample
+xgb_test_pred &lt;- as_tibble(predict(xgb_fit_tuned, as.matrix(PSID_test %&gt;% select(-ID)))) %&gt;%
+  rename(xgb_pred = value) %&gt;%
+  bind_cols(PSID_test) %&gt;%
+  select(ID, xgb_pred)</code></pre>
+</div>
+<div id="averaging-the-estimates-of-all-methods-and-making-final-predictions" class="section level4">
+<h4>Averaging the estimates of all methods, and making final predictions</h4>
+<pre class="r"><code># In sample predictions
+train_preds &lt;- left_join(
+  reg_train_preds,
+  rf_train_pred
+) %&gt;% 
+  left_join(
+    xgb_train_pred
+  ) %&gt;%
+  mutate(
+    avg_pred = (avg_regularized_pred + rf_train_pred + xgb_pred)/3,
+    avg_sqerror = (lnwage - avg_pred)^2
+  )
+sapply(train_preds, function(rmse) mean(rmse))[c(7:10, 12, 14, 16)]</code></pre>
+<pre><code>##   lasso_sqerror   ridge_sqerror   en0.5_sqerror avg_reg_sqerror      rf_sqerror 
+##      0.14176184      0.14303891      0.14144345      0.14174672      0.06931694 
+##     xgb_sqerror     avg_sqerror 
+##      0.14496544      0.11221770</code></pre>
+<pre class="r"><code># Out of sample predictions
+test_preds &lt;- left_join(
+  reg_test_preds,
+  rf_test_pred
+) %&gt;% 
+  left_join(
+    xgb_test_pred
+  ) %&gt;%
+  mutate(
+    avg_pred = (avg_regularized_pred + rf_test_pred + xgb_pred)/3)</code></pre>
+<p>Exporting the predictions to csv:</p>
+<pre class="r"><code>test_preds %&gt;% select(ID, avg_pred) %&gt;% rename(lnwage = avg_pred) %&gt;%
+  write.csv(&quot;Submission1.csv&quot;)</code></pre>
+</div>
 </div>
 
 
