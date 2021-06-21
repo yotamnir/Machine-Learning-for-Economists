@@ -19,7 +19,7 @@ knitr::opts_chunk$set(echo = TRUE)
 Loading the relevant packages and the training data:
 ```{r, results='hide', message=FALSE}
 if (!require("pacman")) install.packages("pacman")
-pacman::p_load(tidyverse, tidymodels, kableExtra, glmnet, ranger, vip, xgboost)
+pacman::p_load(tidyverse, tidymodels, kableExtra, glmnet, ranger, vip, xgboost, stacks)
 PSID <- read.csv("train.csv") %>%
   as_tibble() %>%
   select(-farmer)   # removed because there are no occurrences in the data
@@ -71,18 +71,18 @@ h_female <- PSID %>% group_by(edyrs, female) %>%
   filter(edyrs > 5) %>%
   mutate(wagediff = lag(lnwage, 1) - lnwage) %>%
   filter(female == 1)
-#ggplot(h_female, aes(edyrs, wagediff)) + geom_path()
+ggplot(h_female, aes(edyrs, wagediff)) + geom_path()
 ```
 
 
 ### Creating splits and features
 
-Here I split the sample 80/20 to train and test, as a first step for my own reference (I should use the full training set when submitting my estimations), and split into five folds.
+Here I split the sample 80/20 to train and test, as a first step for my own reference (I use the full training set when submitting my estimations), and split into five folds.
 
-I also experiment with some features which may improve predictive ability.
+I also experiment with some features which the data exploration suggests may improve predictive ability.
 
 ```{r}
-seed <- 1310
+seed <- 2011
 set.seed(seed)
 
 # Adding various features constructed from the data
@@ -103,7 +103,8 @@ test <- testing(split)
 folds <- train %>% vfold_cv(v = 5)
 ```
 
-### Regularized Regression
+### Manual Prediction Attempt
+#### Regularized Regression
 
 Specifying the models that will be used (lasso, ridge, and elastic net with $\alpha=0.5$):
 ```{r}
@@ -263,7 +264,7 @@ sapply(reg_test_preds, function(rmse) mean(rmse))[7:10]
 Note that since lasso does especially well at prediction – particularly in this case where many of the variables are of low significance to the regression – I give it the majority of the weight in the average prediction.
 
 
-### Random Forest
+#### Random Forest
 
 Creating the RF object, for now using only the smaller training set (note, I leave out the interaction variables constructed earlier so that the trees can generate their own interactions):
 ```{r, warning=FALSE}
@@ -297,10 +298,10 @@ rf_test_pred <- as_tibble(predict(rf_fit, data = test)$predictions) %>%
 mean(rf_test_pred$rf_sqerror)
 ```
 
-The out of sample MSE is quite similar to that obtained using regularized regressions.
+The out of sample MSE is quite similar to that obtained using regularized regressions (as verified over several seeds).
 
 
-### Gradient Boosting
+#### Gradient Boosting
 
 The implementation of gradient boosting here closely follows the tutorial on <http://uc-r.github.io/gbm_regression>.
 
@@ -388,10 +389,10 @@ xgb_test_pred <- as_tibble(predict(xgb_fit_tuned, as.matrix(test %>% select(-c("
 mean(xgb_test_pred$xgb_sqerror)
 
 ```
-Following several iterations, it appears that boosting does slightly better than the previous methods on average, but there doesn't appear to be any significant difference.
+Following several iterations, it appears that boosting does very slightly better than the previous methods on average, but there doesn't appear to be a significant difference.
 
 
-### Averaging the estimates of all methods
+#### Averaging the estimates of all methods
 
 ```{r, message=FALSE}
 # In sample predictions
@@ -423,9 +424,202 @@ test_preds <- left_join(
 sapply(test_preds, function(rmse) mean(rmse))[c(7:10, 12, 14, 16)]
 ```
 
+### Optimizing Predictions with 'Stacks'
+
+This requires creating *specifications* of the models above so that they can be tuned by the stacks functions.
+
+The application here loosely follows tutorials available on <https://stacks.tidymodels.org/articles/basics.html>, <https://www.hfshr.xyz/posts/2020-11-30-model-stacking/>, and <https://juliasilge.com/blog/xgboost-tune-volleyball/>.
+
+```{r}
+# Specifying the general recipe
+general_rec <- recipe(lnwage ~ ., data = train) %>%
+  step_rm(ID)
 
 
-### Final Predictions
+### Lasso
+# Regression model definition
+lasso_spec <- linear_reg() %>%
+  set_args(penalty = tune(), mixture = 1) %>%
+  set_engine("glmnet") %>%
+  set_mode("regression")
+# Regression recipe extension
+reg_rec <- general_rec %>%
+  step_normalize(all_numeric(), skip = TRUE)
+# Lasso workflow (adding model and recipe)
+reg_wf <- workflow() %>%
+  add_model(lasso_spec) %>%
+  add_recipe(reg_rec)
+# Tuning penalty and mixture, and fitting to the 5-fold cv
+set.seed(seed)
+lasso_res <- lasso_wf %>%
+  tune_grid(
+    resamples = folds,
+    metrics = metric_set(rmse),
+    grid = grid_latin_hypercube(penalty(), size = 20),
+    control = control_stack_grid()
+  )
+
+
+### Ridge
+# Regression model definition
+ridge_spec <- linear_reg() %>%
+  set_args(penalty = tune(), mixture = 0) %>%
+  set_engine("glmnet") %>%
+  set_mode("regression")
+# Lasso workflow (adding model and recipe)
+ridge_wf <- workflow() %>%
+  add_model(ridge_spec) %>%
+  add_recipe(reg_rec)
+# Tuning penalty and mixture, and fitting to the 5-fold cv
+set.seed(seed)
+ridge_res <- ridge_wf %>%
+  tune_grid(
+    resamples = folds,
+    metrics = metric_set(rmse),
+    grid = grid_latin_hypercube(penalty(), size = 20),
+    control = control_stack_grid()
+  )
+
+
+### Random Forest
+# Random forest model definition
+rf_spec <- rand_forest(
+    mtry = tune(),
+    min_n = tune(),
+    trees = tune()
+  ) %>%
+  set_mode("regression") %>%
+  set_engine("ranger")
+# Random forest recipe extension
+rf_rec <- general_rec %>%
+  step_rm(edfemale, managerskill, productionf, officef)
+# Random forest workflow
+rf_wf <- workflow() %>%
+  add_model(rf_spec) %>%
+  add_recipe(rf_rec)
+# Tuning parameters, and fitting to the 5-fold cv
+set.seed(seed)
+rf_res <- rf_wf %>%
+  tune_grid(
+    resamples = folds,
+    metrics = metric_set(rmse),
+    grid = grid_latin_hypercube(
+      mtry(range = c(1L, 10L)),
+      min_n(),
+      trees(range = c(500L, 1500L)),
+      size = 50
+    ),
+    control = control_stack_grid()
+  )
+
+
+### Gradient Boosting
+# Boosting model definition
+xgb_spec <- boost_tree(
+    mtry = tune(),
+    min_n = tune(),
+    trees = tune(),
+    tree_depth = tune(),
+    learn_rate = tune(),
+    loss_reduction = tune(),
+    sample_size = tune()
+  ) %>%
+  set_mode("regression") %>%
+  set_engine("xgboost")
+# Boosting workflow
+xgb_wf <- workflow() %>%
+  add_model(xgb_spec) %>%
+  add_recipe(general_rec)
+# Tuning parameters, and fitting to the 5-fold cv
+set.seed(seed)
+xgb_res <- xgb_wf %>%
+  tune_grid(
+    resamples = folds,
+    metrics = metric_set(rmse),
+    grid = grid_latin_hypercube(
+      tree_depth(),
+      min_n(),
+      loss_reduction(),
+      sample_size = sample_prop(range = c(0.65, 1)),
+      mtry(range = c(35L, 44L)),
+      trees(range = c(500L, 1500L)),
+      learn_rate(),
+      size = 100
+    ),
+    control = control_stack_grid()
+  )
+
+
+### Neural Network
+# NN model definition
+nnet_spec <- mlp(
+  hidden_units = tune(),
+  penalty = tune(),
+  epochs = tune()
+) %>%
+  set_engine("nnet") %>%
+  set_mode("regression")
+# NN recipe extension
+nnet_rec <- general_rec %>%
+  step_normalize(all_predictors()) %>%
+  step_corr(all_predictors())
+# NN workflow (adding model and recipe)
+nnet_wf <- workflow() %>%
+  add_model(nnet_spec) %>%
+  add_recipe(nnet_rec)
+# Tuning penalty and mixture, and fitting to the 5-fold cv
+set.seed(seed)
+nnet_res <- nnet_wf %>%
+  tune_grid(
+    resamples = folds,
+    metrics = metric_set(rmse),
+    grid = grid_latin_hypercube(
+      penalty(),
+      hidden_units(),
+      epochs(),
+      size = 100
+    ),
+    control = control_stack_grid()
+  )
+
+```
+
+
+Now we can stack the workflows and blend their predictions:
+
+```{r, warning=FALSE}
+stack <- stacks() %>%
+  add_candidates(lasso_res) %>%
+  add_candidates(ridge_res) %>%
+  add_candidates(rf_res) %>%
+  add_candidates(xgb_res) %>%
+  add_candidates(nnet_res) %>%
+  blend_predictions() %>%
+  fit_members()
+```
+
+And then generate predictions:
+```{r}
+# In sample
+stack_train_pred <- train %>% bind_cols(predict(stack, new_data = train)) %>%
+  rename(stack_pred = .pred) %>%
+  select(ID, lnwage, stack_pred) %>%
+  mutate(stack_sqerror = (lnwage - stack_pred)^2)
+mean(stack_train_pred$stack_sqerror)
+
+
+# Out of sample
+stack_test_pred <- test %>% bind_cols(predict(stack, new_data = test)) %>%
+  rename(stack_pred = .pred) %>%
+  select(ID, lnwage, stack_pred) %>%
+  mutate(stack_sqerror = (lnwage - stack_pred)^2)
+mean(stack_test_pred$stack_sqerror)
+
+```
+The results tend to be very slightly better on average than my own averaging.
+
+
+### Final Predictions with Manually Averaged Models
 
 We now apply the methods to the full training set in order to generate predictions for the test set, which we load (and fit with the relevant features) below:
 
@@ -447,7 +641,7 @@ PSID_test <- read.csv("test.csv") %>%
 
 #### Regression
 
-Specifying a recipe to be used for all three models (using the training subset; should be changed before submission):
+Specifying a recipe to be used for all three models, this time with the full training set:
 ```{r}
 recipe <- recipe(lnwage ~ ., data = PSID1) %>%
   step_center(all_predictors()) %>% 
@@ -728,7 +922,192 @@ test_preds <- left_join(
 Exporting the predictions to csv:
 
 ```{r}
-test_preds %>% select(ID, avg_pred) %>% rename(lnwage = avg_pred) %>%
-  write.csv("Submission1.csv")
+#test_preds %>% select(ID, avg_pred) %>% rename(lnwage = avg_pred) %>%
+#  write.csv("Submission1.csv")
 ```
 
+
+### Final Predictions with 'Stacks'
+
+```{r}
+# Specifying the general recipe
+general_rec <- recipe(lnwage ~ ., data = PSID1) %>%
+  step_rm(ID)
+
+### Lasso
+# Regression model definition
+lasso_spec <- linear_reg() %>%
+  set_args(penalty = tune(), mixture = 1) %>%
+  set_engine("glmnet") %>%
+  set_mode("regression")
+# Regression recipe extension
+reg_rec <- general_rec %>%
+  step_normalize(all_numeric(), skip = TRUE)
+# Lasso workflow (adding model and recipe)
+reg_wf <- workflow() %>%
+  add_model(lasso_spec) %>%
+  add_recipe(reg_rec)
+# Tuning penalty and mixture, and fitting to the 5-fold cv
+set.seed(seed)
+lasso_res <- lasso_wf %>%
+  tune_grid(
+    resamples = folds,
+    metrics = metric_set(rmse),
+    grid = grid_latin_hypercube(penalty(), size = 20),
+    control = control_stack_grid()
+  )
+
+
+### Ridge
+# Regression model definition
+ridge_spec <- linear_reg() %>%
+  set_args(penalty = tune(), mixture = 0) %>%
+  set_engine("glmnet") %>%
+  set_mode("regression")
+# Lasso workflow (adding model and recipe)
+ridge_wf <- workflow() %>%
+  add_model(ridge_spec) %>%
+  add_recipe(reg_rec)
+# Tuning penalty and mixture, and fitting to the 5-fold cv
+set.seed(seed)
+ridge_res <- ridge_wf %>%
+  tune_grid(
+    resamples = folds,
+    metrics = metric_set(rmse),
+    grid = grid_latin_hypercube(penalty(), size = 20),
+    control = control_stack_grid()
+  )
+
+
+### Random Forest
+# Random forest model definition
+rf_spec <- rand_forest(
+    mtry = tune(),
+    min_n = tune(),
+    trees = tune()
+  ) %>%
+  set_mode("regression") %>%
+  set_engine("ranger")
+# Random forest recipe extension
+rf_rec <- general_rec %>%
+  step_rm(edfemale, managerskill, productionf, officef)
+# Random forest workflow
+rf_wf <- workflow() %>%
+  add_model(rf_spec) %>%
+  add_recipe(rf_rec)
+# Tuning parameters, and fitting to the 5-fold cv
+set.seed(seed)
+rf_res <- rf_wf %>%
+  tune_grid(
+    resamples = folds,
+    metrics = metric_set(rmse),
+    grid = grid_latin_hypercube(
+      mtry(range = c(1L, 10L)),
+      min_n(),
+      trees(range = c(500L, 1500L)),
+      size = 50
+    ),
+    control = control_stack_grid()
+  )
+
+
+### Gradient Boosting
+# Boosting model definition
+xgb_spec <- boost_tree(
+    mtry = tune(),
+    min_n = tune(),
+    trees = tune(),
+    tree_depth = tune(),
+    learn_rate = tune(),
+    loss_reduction = tune(),
+    sample_size = tune()
+  ) %>%
+  set_mode("regression") %>%
+  set_engine("xgboost")
+# Boosting workflow
+xgb_wf <- workflow() %>%
+  add_model(xgb_spec) %>%
+  add_recipe(general_rec)
+# Tuning parameters, and fitting to the 5-fold cv
+set.seed(seed)
+xgb_res <- xgb_wf %>%
+  tune_grid(
+    resamples = folds,
+    metrics = metric_set(rmse),
+    grid = grid_latin_hypercube(
+      tree_depth(),
+      min_n(),
+      loss_reduction(),
+      sample_size = sample_prop(range = c(0.65, 1)),
+      mtry(range = c(35L, 44L)),
+      trees(range = c(500L, 1500L)),
+      learn_rate(),
+      size = 100
+    ),
+    control = control_stack_grid()
+  )
+
+
+### Neural Network
+# NN model definition
+nnet_spec <- mlp(
+  hidden_units = tune(),
+  penalty = tune(),
+  epochs = tune()
+) %>%
+  set_engine("nnet") %>%
+  set_mode("regression")
+# NN recipe extension
+nnet_rec <- general_rec %>%
+  step_normalize(all_predictors()) %>%
+  step_corr(all_predictors())
+# NN workflow (adding model and recipe)
+nnet_wf <- workflow() %>%
+  add_model(nnet_spec) %>%
+  add_recipe(nnet_rec)
+# Tuning penalty and mixture, and fitting to the 5-fold cv
+set.seed(seed)
+nnet_res <- nnet_wf %>%
+  tune_grid(
+    resamples = folds,
+    metrics = metric_set(rmse),
+    grid = grid_latin_hypercube(
+      penalty(),
+      hidden_units(),
+      epochs(),
+      size = 100
+    ),
+    control = control_stack_grid()
+  )
+```
+
+
+Stacking the workflows and blending their predictions:
+
+```{r, warning=FALSE}
+stack <- stacks() %>%
+  add_candidates(lasso_res) %>%
+  add_candidates(ridge_res) %>%
+  add_candidates(rf_res) %>%
+  add_candidates(xgb_res) %>%
+  add_candidates(nnet_res) %>%
+  blend_predictions() %>%
+  fit_members()
+```
+
+Generating predictions and exporting to csv:
+```{r}
+# In sample
+stack_train_pred <- PSID1 %>% bind_cols(predict(stack, new_data = PSID1)) %>%
+  rename(stack_pred = .pred) %>%
+  select(ID, lnwage, stack_pred) %>%
+  mutate(stack_sqerror = (lnwage - stack_pred)^2)
+mean(stack_train_pred$stack_sqerror)
+
+
+# Out of sample
+stack_test_pred <- PSID_test %>% bind_cols(predict(stack, new_data = PSID_test)) %>%
+  rename(lnwage = .pred) %>%
+  select(ID, lnwage) %>%
+  write.csv("Submission5.csv")
+```

@@ -263,7 +263,7 @@ div.tocify {
 <h3>Loading packages and data</h3>
 <p>Loading the relevant packages and the training data:</p>
 <pre class="r"><code>if (!require(&quot;pacman&quot;)) install.packages(&quot;pacman&quot;)
-pacman::p_load(tidyverse, tidymodels, kableExtra, glmnet, ranger, vip, xgboost)
+pacman::p_load(tidyverse, tidymodels, kableExtra, glmnet, ranger, vip, xgboost, stacks)
 PSID &lt;- read.csv(&quot;train.csv&quot;) %&gt;%
   as_tibble() %&gt;%
   select(-farmer)   # removed because there are no occurrences in the data</code></pre>
@@ -303,14 +303,15 @@ colnames(by_occupation) &lt;- c(&quot;m_wage&quot;, &quot;v_wage&quot;, &quot;n&
   filter(edyrs &gt; 5) %&gt;%
   mutate(wagediff = lag(lnwage, 1) - lnwage) %&gt;%
   filter(female == 1)
-#ggplot(h_female, aes(edyrs, wagediff)) + geom_path()</code></pre>
+ggplot(h_female, aes(edyrs, wagediff)) + geom_path()</code></pre>
+<p><img src="data:image/png;base64,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" width="672" /></p>
 </div>
 </div>
 <div id="creating-splits-and-features" class="section level3">
 <h3>Creating splits and features</h3>
-<p>Here I split the sample 80/20 to train and test, as a first step for my own reference (I should use the full training set when submitting my estimations), and split into five folds.</p>
-<p>I also experiment with some features which may improve predictive ability.</p>
-<pre class="r"><code>seed &lt;- 1310
+<p>Here I split the sample 80/20 to train and test, as a first step for my own reference (I use the full training set when submitting my estimations), and split into five folds.</p>
+<p>I also experiment with some features which the data exploration suggests may improve predictive ability.</p>
+<pre class="r"><code>seed &lt;- 2011
 set.seed(seed)
 
 # Adding various features constructed from the data
@@ -330,8 +331,10 @@ train &lt;- training(split)
 test &lt;- testing(split)
 folds &lt;- train %&gt;% vfold_cv(v = 5)</code></pre>
 </div>
-<div id="regularized-regression" class="section level3">
-<h3>Regularized Regression</h3>
+<div id="manual-prediction-attempt" class="section level3">
+<h3>Manual Prediction Attempt</h3>
+<div id="regularized-regression" class="section level4">
+<h4>Regularized Regression</h4>
 <p>Specifying the models that will be used (lasso, ridge, and elastic net with <span class="math inline">\(\alpha=0.5\)</span>):</p>
 <pre class="r"><code>lasso_mod &lt;- linear_reg() %&gt;%
   set_args(penalty = tune(), mixture = 1) %&gt;%
@@ -442,7 +445,7 @@ reg_train_preds &lt;- bind_cols(train, lasso_train_pred, ridge_train_pred, en0.5
 # MSE
 sapply(reg_train_preds, function(rmse) mean(rmse))[7:10]</code></pre>
 <pre><code>##   lasso_sqerror   ridge_sqerror   en0.5_sqerror avg_reg_sqerror 
-##       0.1523806       0.1450522       0.1447349       0.1507958</code></pre>
+##       0.1393844       0.1405281       0.1407558       0.1395127</code></pre>
 <pre class="r"><code># Out-of-sample predictions
 lasso_test_pred &lt;- lasso_mod_final %&gt;%
   fit(lnwage ~ ., data = lasso_juice) %&gt;%
@@ -469,11 +472,11 @@ reg_test_preds &lt;- bind_cols(test, lasso_test_pred, ridge_test_pred, en0.5_tes
 # MSE
 sapply(reg_test_preds, function(rmse) mean(rmse))[7:10]</code></pre>
 <pre><code>##   lasso_sqerror   ridge_sqerror   en0.5_sqerror avg_reg_sqerror 
-##       0.1573012       0.1609223       0.1555982       0.1567307</code></pre>
+##       0.1593286       0.1599706       0.1605919       0.1594132</code></pre>
 <p>Note that since lasso does especially well at prediction – particularly in this case where many of the variables are of low significance to the regression – I give it the majority of the weight in the average prediction.</p>
 </div>
-<div id="random-forest" class="section level3">
-<h3>Random Forest</h3>
+<div id="random-forest" class="section level4">
+<h4>Random Forest</h4>
 <p>Creating the RF object, for now using only the smaller training set (note, I leave out the interaction variables constructed earlier so that the trees can generate their own interactions):</p>
 <pre class="r"><code>set.seed(seed)
 
@@ -492,7 +495,7 @@ rf_train_pred &lt;- as_tibble(predict(rf_fit, data = train)$predictions) %&gt;%
   select(ID, lnwage, rf_train_pred) %&gt;%
   mutate(rf_sqerror = (lnwage - rf_train_pred)^2)
 mean(rf_train_pred$rf_sqerror)</code></pre>
-<pre><code>## [1] 0.07071893</code></pre>
+<pre><code>## [1] 0.06667919</code></pre>
 <pre class="r"><code># Out of sample predictions
 rf_test_pred &lt;- as_tibble(predict(rf_fit, data = test)$predictions) %&gt;%
   rename(rf_test_pred = value) %&gt;%
@@ -500,11 +503,11 @@ rf_test_pred &lt;- as_tibble(predict(rf_fit, data = test)$predictions) %&gt;%
   select(ID, lnwage, rf_test_pred) %&gt;%
   mutate(rf_sqerror = (lnwage - rf_test_pred)^2)
 mean(rf_test_pred$rf_sqerror)</code></pre>
-<pre><code>## [1] 0.1460328</code></pre>
-<p>The out of sample MSE is quite similar to that obtained using regularized regressions.</p>
+<pre><code>## [1] 0.1649844</code></pre>
+<p>The out of sample MSE is quite similar to that obtained using regularized regressions (as verified over several seeds).</p>
 </div>
-<div id="gradient-boosting" class="section level3">
-<h3>Gradient Boosting</h3>
+<div id="gradient-boosting" class="section level4">
+<h4>Gradient Boosting</h4>
 <p>The implementation of gradient boosting here closely follows the tutorial on <a href="http://uc-r.github.io/gbm_regression" class="uri">http://uc-r.github.io/gbm_regression</a>.</p>
 <p>We begin by tuning the hyperparameters:</p>
 <pre class="r"><code># Creating a hyperparameter grid
@@ -571,7 +574,7 @@ xgb_train_pred &lt;- as_tibble(predict(xgb_fit_tuned, as.matrix(train %&gt;% sel
   select(ID, lnwage, xgb_pred) %&gt;%
   mutate(xgb_sqerror = (lnwage - xgb_pred)^2)
 mean(xgb_train_pred$xgb_sqerror)</code></pre>
-<pre><code>## [1] 0.1416879</code></pre>
+<pre><code>## [1] 0.1415992</code></pre>
 <pre class="r"><code># Predicting out of sample
 xgb_test_pred &lt;- as_tibble(predict(xgb_fit_tuned, as.matrix(test %&gt;% select(-c(&quot;ID&quot;, &quot;lnwage&quot;))))) %&gt;%
   rename(xgb_pred = value) %&gt;%
@@ -579,11 +582,11 @@ xgb_test_pred &lt;- as_tibble(predict(xgb_fit_tuned, as.matrix(test %&gt;% selec
   select(ID, lnwage, xgb_pred) %&gt;%
   mutate(xgb_sqerror = (lnwage - xgb_pred)^2)
 mean(xgb_test_pred$xgb_sqerror)</code></pre>
-<pre><code>## [1] 0.158158</code></pre>
-<p>Following several iterations, it appears that boosting does slightly better than the previous methods on average, but there doesn’t appear to be any significant difference.</p>
+<pre><code>## [1] 0.1622138</code></pre>
+<p>Following several iterations, it appears that boosting does very slightly better than the previous methods on average, but there doesn’t appear to be a significant difference.</p>
 </div>
-<div id="averaging-the-estimates-of-all-methods" class="section level3">
-<h3>Averaging the estimates of all methods</h3>
+<div id="averaging-the-estimates-of-all-methods" class="section level4">
+<h4>Averaging the estimates of all methods</h4>
 <pre class="r"><code># In sample predictions
 train_preds &lt;- left_join(
   reg_train_preds,
@@ -598,9 +601,9 @@ train_preds &lt;- left_join(
   )
 sapply(train_preds, function(rmse) mean(rmse))[c(7:10, 12, 14, 16)]</code></pre>
 <pre><code>##   lasso_sqerror   ridge_sqerror   en0.5_sqerror avg_reg_sqerror      rf_sqerror 
-##      0.15238057      0.14505217      0.14473487      0.15079584      0.07071893 
+##      0.13938438      0.14052813      0.14075584      0.13951265      0.06667919 
 ##     xgb_sqerror     avg_sqerror 
-##      0.14168789      0.11464910</code></pre>
+##      0.14159916      0.10993625</code></pre>
 <pre class="r"><code># Out of sample predictions
 test_preds &lt;- left_join(
   reg_test_preds,
@@ -615,12 +618,193 @@ test_preds &lt;- left_join(
   )
 sapply(test_preds, function(rmse) mean(rmse))[c(7:10, 12, 14, 16)]</code></pre>
 <pre><code>##   lasso_sqerror   ridge_sqerror   en0.5_sqerror avg_reg_sqerror      rf_sqerror 
-##       0.1573012       0.1609223       0.1555982       0.1567307       0.1460328 
+##       0.1593286       0.1599706       0.1605919       0.1594132       0.1649844 
 ##     xgb_sqerror     avg_sqerror 
-##       0.1581580       0.1496361</code></pre>
+##       0.1622138       0.1578668</code></pre>
 </div>
-<div id="final-predictions" class="section level3">
-<h3>Final Predictions</h3>
+</div>
+<div id="optimizing-predictions-with-stacks" class="section level3">
+<h3>Optimizing Predictions with ‘Stacks’</h3>
+<p>This requires creating <em>specifications</em> of the models above so that they can be tuned by the stacks functions.</p>
+<p>The application here loosely follows tutorials available on <a href="https://stacks.tidymodels.org/articles/basics.html" class="uri">https://stacks.tidymodels.org/articles/basics.html</a>, <a href="https://www.hfshr.xyz/posts/2020-11-30-model-stacking/" class="uri">https://www.hfshr.xyz/posts/2020-11-30-model-stacking/</a>, and <a href="https://juliasilge.com/blog/xgboost-tune-volleyball/" class="uri">https://juliasilge.com/blog/xgboost-tune-volleyball/</a>.</p>
+<pre class="r"><code># Specifying the general recipe
+general_rec &lt;- recipe(lnwage ~ ., data = train) %&gt;%
+  step_rm(ID)
+
+
+### Lasso
+# Regression model definition
+lasso_spec &lt;- linear_reg() %&gt;%
+  set_args(penalty = tune(), mixture = 1) %&gt;%
+  set_engine(&quot;glmnet&quot;) %&gt;%
+  set_mode(&quot;regression&quot;)
+# Regression recipe extension
+reg_rec &lt;- general_rec %&gt;%
+  step_normalize(all_numeric(), skip = TRUE)
+# Lasso workflow (adding model and recipe)
+reg_wf &lt;- workflow() %&gt;%
+  add_model(lasso_spec) %&gt;%
+  add_recipe(reg_rec)
+# Tuning penalty and mixture, and fitting to the 5-fold cv
+set.seed(seed)
+lasso_res &lt;- lasso_wf %&gt;%
+  tune_grid(
+    resamples = folds,
+    metrics = metric_set(rmse),
+    grid = grid_latin_hypercube(penalty(), size = 20),
+    control = control_stack_grid()
+  )
+
+
+### Ridge
+# Regression model definition
+ridge_spec &lt;- linear_reg() %&gt;%
+  set_args(penalty = tune(), mixture = 0) %&gt;%
+  set_engine(&quot;glmnet&quot;) %&gt;%
+  set_mode(&quot;regression&quot;)
+# Lasso workflow (adding model and recipe)
+ridge_wf &lt;- workflow() %&gt;%
+  add_model(ridge_spec) %&gt;%
+  add_recipe(reg_rec)
+# Tuning penalty and mixture, and fitting to the 5-fold cv
+set.seed(seed)
+ridge_res &lt;- ridge_wf %&gt;%
+  tune_grid(
+    resamples = folds,
+    metrics = metric_set(rmse),
+    grid = grid_latin_hypercube(penalty(), size = 20),
+    control = control_stack_grid()
+  )
+
+
+### Random Forest
+# Random forest model definition
+rf_spec &lt;- rand_forest(
+    mtry = tune(),
+    min_n = tune(),
+    trees = tune()
+  ) %&gt;%
+  set_mode(&quot;regression&quot;) %&gt;%
+  set_engine(&quot;ranger&quot;)
+# Random forest recipe extension
+rf_rec &lt;- general_rec %&gt;%
+  step_rm(edfemale, managerskill, productionf, officef)
+# Random forest workflow
+rf_wf &lt;- workflow() %&gt;%
+  add_model(rf_spec) %&gt;%
+  add_recipe(rf_rec)
+# Tuning parameters, and fitting to the 5-fold cv
+set.seed(seed)
+rf_res &lt;- rf_wf %&gt;%
+  tune_grid(
+    resamples = folds,
+    metrics = metric_set(rmse),
+    grid = grid_latin_hypercube(
+      mtry(range = c(1L, 10L)),
+      min_n(),
+      trees(range = c(500L, 1500L)),
+      size = 50
+    ),
+    control = control_stack_grid()
+  )
+
+
+### Gradient Boosting
+# Boosting model definition
+xgb_spec &lt;- boost_tree(
+    mtry = tune(),
+    min_n = tune(),
+    trees = tune(),
+    tree_depth = tune(),
+    learn_rate = tune(),
+    loss_reduction = tune(),
+    sample_size = tune()
+  ) %&gt;%
+  set_mode(&quot;regression&quot;) %&gt;%
+  set_engine(&quot;xgboost&quot;)
+# Boosting workflow
+xgb_wf &lt;- workflow() %&gt;%
+  add_model(xgb_spec) %&gt;%
+  add_recipe(general_rec)
+# Tuning parameters, and fitting to the 5-fold cv
+set.seed(seed)
+xgb_res &lt;- xgb_wf %&gt;%
+  tune_grid(
+    resamples = folds,
+    metrics = metric_set(rmse),
+    grid = grid_latin_hypercube(
+      tree_depth(),
+      min_n(),
+      loss_reduction(),
+      sample_size = sample_prop(range = c(0.65, 1)),
+      mtry(range = c(35L, 44L)),
+      trees(range = c(500L, 1500L)),
+      learn_rate(),
+      size = 100
+    ),
+    control = control_stack_grid()
+  )
+
+
+### Neural Network
+# NN model definition
+nnet_spec &lt;- mlp(
+  hidden_units = tune(),
+  penalty = tune(),
+  epochs = tune()
+) %&gt;%
+  set_engine(&quot;nnet&quot;) %&gt;%
+  set_mode(&quot;regression&quot;)
+# NN recipe extension
+nnet_rec &lt;- general_rec %&gt;%
+  step_normalize(all_predictors()) %&gt;%
+  step_corr(all_predictors())
+# NN workflow (adding model and recipe)
+nnet_wf &lt;- workflow() %&gt;%
+  add_model(nnet_spec) %&gt;%
+  add_recipe(nnet_rec)
+# Tuning penalty and mixture, and fitting to the 5-fold cv
+set.seed(seed)
+nnet_res &lt;- nnet_wf %&gt;%
+  tune_grid(
+    resamples = folds,
+    metrics = metric_set(rmse),
+    grid = grid_latin_hypercube(
+      penalty(),
+      hidden_units(),
+      epochs(),
+      size = 100
+    ),
+    control = control_stack_grid()
+  )</code></pre>
+<p>Now we can stack the workflows and blend their predictions:</p>
+<pre class="r"><code>stack &lt;- stacks() %&gt;%
+  add_candidates(lasso_res) %&gt;%
+  add_candidates(ridge_res) %&gt;%
+  add_candidates(rf_res) %&gt;%
+  add_candidates(xgb_res) %&gt;%
+  add_candidates(nnet_res) %&gt;%
+  blend_predictions() %&gt;%
+  fit_members()</code></pre>
+<p>And then generate predictions:</p>
+<pre class="r"><code># In sample
+stack_train_pred &lt;- train %&gt;% bind_cols(predict(stack, new_data = train)) %&gt;%
+  rename(stack_pred = .pred) %&gt;%
+  select(ID, lnwage, stack_pred) %&gt;%
+  mutate(stack_sqerror = (lnwage - stack_pred)^2)
+mean(stack_train_pred$stack_sqerror)</code></pre>
+<pre><code>## [1] 0.1052997</code></pre>
+<pre class="r"><code># Out of sample
+stack_test_pred &lt;- test %&gt;% bind_cols(predict(stack, new_data = test)) %&gt;%
+  rename(stack_pred = .pred) %&gt;%
+  select(ID, lnwage, stack_pred) %&gt;%
+  mutate(stack_sqerror = (lnwage - stack_pred)^2)
+mean(stack_test_pred$stack_sqerror)</code></pre>
+<pre><code>## [1] 0.159528</code></pre>
+<p>The results tend to be very slightly better on average than my own averaging.</p>
+</div>
+<div id="final-predictions-with-manually-averaged-models" class="section level3">
+<h3>Final Predictions with Manually Averaged Models</h3>
 <p>We now apply the methods to the full training set in order to generate predictions for the test set, which we load (and fit with the relevant features) below:</p>
 <pre class="r"><code>PSID_test &lt;- read.csv(&quot;test.csv&quot;) %&gt;%
   as_tibble() %&gt;%
@@ -635,7 +819,7 @@ sapply(test_preds, function(rmse) mean(rmse))[c(7:10, 12, 14, 16)]</code></pre>
                          officef = officeadmin * female)</code></pre>
 <div id="regression" class="section level4">
 <h4>Regression</h4>
-<p>Specifying a recipe to be used for all three models (using the training subset; should be changed before submission):</p>
+<p>Specifying a recipe to be used for all three models, this time with the full training set:</p>
 <pre class="r"><code>recipe &lt;- recipe(lnwage ~ ., data = PSID1) %&gt;%
   step_center(all_predictors()) %&gt;% 
   step_scale(all_predictors()) %&gt;% 
@@ -734,7 +918,7 @@ reg_train_preds &lt;- bind_cols(PSID1, lasso_train_pred, ridge_train_pred, en0.5
 # MSE
 sapply(reg_train_preds, function(rmse) mean(rmse))[7:10]</code></pre>
 <pre><code>##   lasso_sqerror   ridge_sqerror   en0.5_sqerror avg_reg_sqerror 
-##       0.1417618       0.1430389       0.1414434       0.1417467</code></pre>
+##       0.1421496       0.1430389       0.1420682       0.1421560</code></pre>
 <pre class="r"><code># Out-of-sample predictions
 lasso_test_pred &lt;- lasso_mod_final %&gt;%
   fit(lnwage ~ ., data = lasso_juice) %&gt;%
@@ -772,7 +956,7 @@ rf_train_pred &lt;- as_tibble(predict(rf_fit, data = PSID1)$predictions) %&gt;%
   select(ID, lnwage, rf_train_pred) %&gt;%
   mutate(rf_sqerror = (lnwage - rf_train_pred)^2)
 mean(rf_train_pred$rf_sqerror)</code></pre>
-<pre><code>## [1] 0.06931694</code></pre>
+<pre><code>## [1] 0.06854607</code></pre>
 <pre class="r"><code># Out of sample predictions
 rf_test_pred &lt;- as_tibble(predict(rf_fit, data = PSID_test)$predictions) %&gt;%
   rename(rf_test_pred = value) %&gt;%
@@ -846,7 +1030,7 @@ xgb_train_pred &lt;- as_tibble(predict(xgb_fit_tuned, as.matrix(PSID1 %&gt;% sel
   select(ID, lnwage, xgb_pred) %&gt;%
   mutate(xgb_sqerror = (lnwage - xgb_pred)^2)
 mean(xgb_train_pred$xgb_sqerror)</code></pre>
-<pre><code>## [1] 0.1449654</code></pre>
+<pre><code>## [1] 0.1457015</code></pre>
 <pre class="r"><code># Predicting out of sample
 xgb_test_pred &lt;- as_tibble(predict(xgb_fit_tuned, as.matrix(PSID_test %&gt;% select(-ID)))) %&gt;%
   rename(xgb_pred = value) %&gt;%
@@ -869,9 +1053,9 @@ train_preds &lt;- left_join(
   )
 sapply(train_preds, function(rmse) mean(rmse))[c(7:10, 12, 14, 16)]</code></pre>
 <pre><code>##   lasso_sqerror   ridge_sqerror   en0.5_sqerror avg_reg_sqerror      rf_sqerror 
-##      0.14176184      0.14303891      0.14144345      0.14174672      0.06931694 
+##      0.14214959      0.14303891      0.14206815      0.14215597      0.06854607 
 ##     xgb_sqerror     avg_sqerror 
-##      0.14496544      0.11221770</code></pre>
+##      0.14570148      0.11253873</code></pre>
 <pre class="r"><code># Out of sample predictions
 test_preds &lt;- left_join(
   reg_test_preds,
@@ -883,9 +1067,183 @@ test_preds &lt;- left_join(
   mutate(
     avg_pred = (avg_regularized_pred + rf_test_pred + xgb_pred)/3)</code></pre>
 <p>Exporting the predictions to csv:</p>
-<pre class="r"><code>test_preds %&gt;% select(ID, avg_pred) %&gt;% rename(lnwage = avg_pred) %&gt;%
-  write.csv(&quot;Submission1.csv&quot;)</code></pre>
+<pre class="r"><code>#test_preds %&gt;% select(ID, avg_pred) %&gt;% rename(lnwage = avg_pred) %&gt;%
+#  write.csv(&quot;Submission1.csv&quot;)</code></pre>
 </div>
+</div>
+<div id="final-predictions-with-stacks" class="section level3">
+<h3>Final Predictions with ‘Stacks’</h3>
+<pre class="r"><code># Specifying the general recipe
+general_rec &lt;- recipe(lnwage ~ ., data = PSID1) %&gt;%
+  step_rm(ID)
+
+### Lasso
+# Regression model definition
+lasso_spec &lt;- linear_reg() %&gt;%
+  set_args(penalty = tune(), mixture = 1) %&gt;%
+  set_engine(&quot;glmnet&quot;) %&gt;%
+  set_mode(&quot;regression&quot;)
+# Regression recipe extension
+reg_rec &lt;- general_rec %&gt;%
+  step_normalize(all_numeric(), skip = TRUE)
+# Lasso workflow (adding model and recipe)
+reg_wf &lt;- workflow() %&gt;%
+  add_model(lasso_spec) %&gt;%
+  add_recipe(reg_rec)
+# Tuning penalty and mixture, and fitting to the 5-fold cv
+set.seed(seed)
+lasso_res &lt;- lasso_wf %&gt;%
+  tune_grid(
+    resamples = folds,
+    metrics = metric_set(rmse),
+    grid = grid_latin_hypercube(penalty(), size = 20),
+    control = control_stack_grid()
+  )
+
+
+### Ridge
+# Regression model definition
+ridge_spec &lt;- linear_reg() %&gt;%
+  set_args(penalty = tune(), mixture = 0) %&gt;%
+  set_engine(&quot;glmnet&quot;) %&gt;%
+  set_mode(&quot;regression&quot;)
+# Lasso workflow (adding model and recipe)
+ridge_wf &lt;- workflow() %&gt;%
+  add_model(ridge_spec) %&gt;%
+  add_recipe(reg_rec)
+# Tuning penalty and mixture, and fitting to the 5-fold cv
+set.seed(seed)
+ridge_res &lt;- ridge_wf %&gt;%
+  tune_grid(
+    resamples = folds,
+    metrics = metric_set(rmse),
+    grid = grid_latin_hypercube(penalty(), size = 20),
+    control = control_stack_grid()
+  )
+
+
+### Random Forest
+# Random forest model definition
+rf_spec &lt;- rand_forest(
+    mtry = tune(),
+    min_n = tune(),
+    trees = tune()
+  ) %&gt;%
+  set_mode(&quot;regression&quot;) %&gt;%
+  set_engine(&quot;ranger&quot;)
+# Random forest recipe extension
+rf_rec &lt;- general_rec %&gt;%
+  step_rm(edfemale, managerskill, productionf, officef)
+# Random forest workflow
+rf_wf &lt;- workflow() %&gt;%
+  add_model(rf_spec) %&gt;%
+  add_recipe(rf_rec)
+# Tuning parameters, and fitting to the 5-fold cv
+set.seed(seed)
+rf_res &lt;- rf_wf %&gt;%
+  tune_grid(
+    resamples = folds,
+    metrics = metric_set(rmse),
+    grid = grid_latin_hypercube(
+      mtry(range = c(1L, 10L)),
+      min_n(),
+      trees(range = c(500L, 1500L)),
+      size = 50
+    ),
+    control = control_stack_grid()
+  )
+
+
+### Gradient Boosting
+# Boosting model definition
+xgb_spec &lt;- boost_tree(
+    mtry = tune(),
+    min_n = tune(),
+    trees = tune(),
+    tree_depth = tune(),
+    learn_rate = tune(),
+    loss_reduction = tune(),
+    sample_size = tune()
+  ) %&gt;%
+  set_mode(&quot;regression&quot;) %&gt;%
+  set_engine(&quot;xgboost&quot;)
+# Boosting workflow
+xgb_wf &lt;- workflow() %&gt;%
+  add_model(xgb_spec) %&gt;%
+  add_recipe(general_rec)
+# Tuning parameters, and fitting to the 5-fold cv
+set.seed(seed)
+xgb_res &lt;- xgb_wf %&gt;%
+  tune_grid(
+    resamples = folds,
+    metrics = metric_set(rmse),
+    grid = grid_latin_hypercube(
+      tree_depth(),
+      min_n(),
+      loss_reduction(),
+      sample_size = sample_prop(range = c(0.65, 1)),
+      mtry(range = c(35L, 44L)),
+      trees(range = c(500L, 1500L)),
+      learn_rate(),
+      size = 100
+    ),
+    control = control_stack_grid()
+  )
+
+
+### Neural Network
+# NN model definition
+nnet_spec &lt;- mlp(
+  hidden_units = tune(),
+  penalty = tune(),
+  epochs = tune()
+) %&gt;%
+  set_engine(&quot;nnet&quot;) %&gt;%
+  set_mode(&quot;regression&quot;)
+# NN recipe extension
+nnet_rec &lt;- general_rec %&gt;%
+  step_normalize(all_predictors()) %&gt;%
+  step_corr(all_predictors())
+# NN workflow (adding model and recipe)
+nnet_wf &lt;- workflow() %&gt;%
+  add_model(nnet_spec) %&gt;%
+  add_recipe(nnet_rec)
+# Tuning penalty and mixture, and fitting to the 5-fold cv
+set.seed(seed)
+nnet_res &lt;- nnet_wf %&gt;%
+  tune_grid(
+    resamples = folds,
+    metrics = metric_set(rmse),
+    grid = grid_latin_hypercube(
+      penalty(),
+      hidden_units(),
+      epochs(),
+      size = 100
+    ),
+    control = control_stack_grid()
+  )</code></pre>
+<p>Stacking the workflows and blending their predictions:</p>
+<pre class="r"><code>stack &lt;- stacks() %&gt;%
+  add_candidates(lasso_res) %&gt;%
+  add_candidates(ridge_res) %&gt;%
+  add_candidates(rf_res) %&gt;%
+  add_candidates(xgb_res) %&gt;%
+  add_candidates(nnet_res) %&gt;%
+  blend_predictions() %&gt;%
+  fit_members()</code></pre>
+<p>Generating predictions and exporting to csv:</p>
+<pre class="r"><code># In sample
+stack_train_pred &lt;- PSID1 %&gt;% bind_cols(predict(stack, new_data = PSID1)) %&gt;%
+  rename(stack_pred = .pred) %&gt;%
+  select(ID, lnwage, stack_pred) %&gt;%
+  mutate(stack_sqerror = (lnwage - stack_pred)^2)
+mean(stack_train_pred$stack_sqerror)</code></pre>
+<pre><code>## [1] 0.1103744</code></pre>
+<pre class="r"><code># Out of sample
+stack_test_pred &lt;- PSID_test %&gt;% bind_cols(predict(stack, new_data = PSID_test)) %&gt;%
+  rename(lnwage = .pred) %&gt;%
+  select(ID, lnwage) %&gt;%
+  write.csv(&quot;Submission5.csv&quot;)</code></pre>
 </div>
 
 
