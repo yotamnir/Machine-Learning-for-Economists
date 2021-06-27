@@ -9,4 +9,4 @@ Exercises related to the Machine Learning for Economists course
 
 [Kaggle Assignment](https://raw.githack.com/yotamnir/Machine-Learning-for-Economists/main/Kaggle/Kaggle.html)
 
-[Assignment 4: Double Lasso] (https://raw.githack.com/yotamnir/Machine-Learning-for-Economists/main/Assignment%20%E2%80%93%20Double%20Lasso/Double-Lasso-Assignment.html)
+[Assignment 4: Double Lasso](https://raw.githack.com/yotamnir/Machine-Learning-for-Economists/main/Assignment%20%E2%80%93%20Double%20Lasso/Double-Lasso-Assignment.html)
