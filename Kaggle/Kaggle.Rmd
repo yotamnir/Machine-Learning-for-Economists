@@ -446,7 +446,7 @@ lasso_spec <- linear_reg() %>%
 reg_rec <- general_rec %>%
   step_normalize(all_numeric(), skip = TRUE)
 # Lasso workflow (adding model and recipe)
-reg_wf <- workflow() %>%
+lasso_wf <- workflow() %>%
   add_model(lasso_spec) %>%
   add_recipe(reg_rec)
 # Tuning penalty and mixture, and fitting to the 5-fold cv
@@ -466,7 +466,7 @@ ridge_spec <- linear_reg() %>%
   set_args(penalty = tune(), mixture = 0) %>%
   set_engine("glmnet") %>%
   set_mode("regression")
-# Lasso workflow (adding model and recipe)
+# Ridge workflow (adding model and recipe)
 ridge_wf <- workflow() %>%
   add_model(ridge_spec) %>%
   add_recipe(reg_rec)
@@ -614,7 +614,6 @@ stack_test_pred <- test %>% bind_cols(predict(stack, new_data = test)) %>%
   select(ID, lnwage, stack_pred) %>%
   mutate(stack_sqerror = (lnwage - stack_pred)^2)
 mean(stack_test_pred$stack_sqerror)
-
 ```
 The results tend to be very slightly better on average than my own averaging.
 
@@ -944,7 +943,7 @@ lasso_spec <- linear_reg() %>%
 reg_rec <- general_rec %>%
   step_normalize(all_numeric(), skip = TRUE)
 # Lasso workflow (adding model and recipe)
-reg_wf <- workflow() %>%
+lasso_wf <- workflow() %>%
   add_model(lasso_spec) %>%
   add_recipe(reg_rec)
 # Tuning penalty and mixture, and fitting to the 5-fold cv
