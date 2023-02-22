@@ -1,0 +1,418 @@
+---
+title: "Text Mining Assignment"
+author: "Yotam Nir"
+date: "15 6 2021"
+output:
+  html_document:
+    toc: yes
+    toc_float: yes
+    toc_depth: 4
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Libraries and Data
+```{r load packages and data, results='hide', message=FALSE}
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load(tidyverse,
+               gutenbergr,
+               magrittr,
+               tidytext,
+               scales,
+               igraph,
+               ggraph,
+               topicmodels,
+               textdata)
+
+authors <- rbind(
+  gutenberg_works(author == "Twain, Mark"),
+  gutenberg_works(author == "Carroll, Lewis"),
+  gutenberg_works(author == "Dumas, Alexandre")
+)
+
+books <- gutenberg_download(c("11", "12", "74", "76", "86", "3176", "1184")) %>%
+  left_join(authors) %>%
+  select(gutenberg_id, text, author, title)
+```
+
+### Tokens and Stop Words
+
+##### Question 1
+
+```{r, message=FALSE}
+data("stop_words")
+
+books_cleansed <- unnest_tokens(books, word, text) %>% anti_join(stop_words)
+
+head(books_cleansed %>% filter(gutenberg_id == 74))
+```
+
+##### Question 2
+
+```{r}
+twain_words <- books_cleansed %>% filter(author == "Twain, Mark") %>%
+  count(word, sort = TRUE) %>%
+  head(15)
+twain_words
+```
+
+##### Question 3
+
+```{r}
+ggplot(twain_words, aes(n, reorder(word, n))) + geom_col()
+```
+
+
+##### Question 4
+
+```{r}
+frequency <- books_cleansed %>% 
+  mutate(word = str_extract(word, "[a-z']+")) %>%
+  count(author, word) %>%
+  group_by(author) %>%
+  mutate(proportion = n / sum(n)) %>% 
+  select(-n) %>% 
+  spread(author, proportion) %>% 
+  gather(author, proportion, `Dumas, Alexandre`:`Carroll, Lewis`)
+```
+
+
+##### Question 5
+
+```{r}
+ggplot(frequency, aes(x = proportion, y = `Twain, Mark`, color = abs(`Twain, Mark` - proportion))) +
+  geom_abline(color = "gray40", lty = 2) +
+  geom_jitter(alpha = 0.1, size = 2.5, width = 0.3, height = 0.3) +
+  geom_text(aes(label = word), check_overlap = TRUE, vjust = 1.5) +
+  scale_x_log10(labels = percent_format()) +
+  scale_y_log10(labels = percent_format()) +
+  scale_color_gradient(limits = c(0, 0.001), low = "darkslategray4", high = "gray75") +
+  facet_wrap(~author, ncol = 2) +
+  theme(legend.position="none") +
+  labs(y = "Mark Twain", x = NULL)
+```
+
+This plot describes the correlations between the frequencies of words used by Mark Twain and those used by each of the other two authors.
+
+
+##### Question 6
+
+Twain's word choice is very slightly more highly correlated with that of Dumas' translations than with Carroll's works.
+
+```{r}
+cor.test(data = frequency %>% filter(author == "Carroll, Lewis"),
+         ~ proportion + `Twain, Mark`)
+cor.test(data = frequency %>% filter(author == "Dumas, Alexandre"),
+         ~ proportion + `Twain, Mark`)
+```
+
+
+### Sentiment Analysis
+
+##### Question 1
+
+```{r}
+get_sentiments("bing")
+get_sentiments("afinn")
+get_sentiments("nrc")
+```
+
+
+##### Question 2
+
+```{r}
+twain_chapters <- books %>%
+  filter(author == "Twain, Mark") %>%
+  group_by(gutenberg_id) %>%
+  mutate(linenumber = row_number(),
+         chapter = cumsum(as.numeric(str_detect(text, regex("^chapter [\\divxlc]",
+                                                 ignore_case = TRUE))))) %>%
+  ungroup() %>%
+  unnest_tokens(word, text)
+```
+
+
+##### Question 3
+
+```{r}
+twain_chapters %>%
+  filter(title == "A Connecticut Yankee in King Arthur's Court") %>%
+  inner_join(get_sentiments("nrc")) %>%
+  filter(sentiment == "joy") %>%
+  count(word, sort = TRUE) %>%
+  head(10)
+```
+
+The assignment of the label "joy" to these words is very sensitive to context. The words "good", "kind" and "pretty" are probably relatively robustly associated with this sentiment (although still far from perfectly), but the rest are probably quite easily found also in neutral or negative sentences.
+
+
+##### Question 4
+
+```{r}
+mark_twain_sentiment <- twain_chapters %>%
+  inner_join(get_sentiments("bing"), by = "word") %>%
+  count(title, index = linenumber %/% 80, sentiment) %>%
+  spread(sentiment, n, fill = 0) %>%
+  mutate(sentiment = positive - negative)
+```
+
+
+##### Question 5
+
+```{r}
+ggplot(mark_twain_sentiment, aes(index, sentiment, color = title)) +
+  geom_col() +
+  facet_wrap(~ title, scales = "free") + 
+  theme(legend.position = "hide")
+```
+
+
+#### The problems of sentiment analysis
+
+##### Question 1
+
+```{r}
+huckleberry_finn <- filter(twain_chapters, title == "Adventures of Huckleberry Finn")
+```
+
+
+##### Question 2
+
+```{r}
+afinn <- huckleberry_finn %>% 
+  inner_join(get_sentiments("afinn"), by = "word") %>% 
+  group_by(index = linenumber %/% 80) %>% 
+  summarise(sentiment = sum(value)) %>% 
+  mutate(method = "AFINN")
+
+bing_and_nrc <- bind_rows(huckleberry_finn %>% 
+                            inner_join(get_sentiments("bing"), by = "word") %>%
+                            mutate(method = "Bing et al."),
+                          huckleberry_finn %>% 
+                            inner_join(get_sentiments("nrc") %>% 
+                                         filter(sentiment %in% c("positive", 
+                                                                 "negative")), by = "word") %>%
+                            mutate(method = "NRC")) %>%
+  count(method, index = linenumber %/% 80, sentiment) %>%
+  spread(sentiment, n, fill = 0) %>%
+  mutate(sentiment = positive - negative)
+
+huck_finn_sentiment <- bind_rows(afinn,bing_and_nrc)
+```
+
+
+##### Question 3
+
+```{r}
+ggplot(huck_finn_sentiment, aes(index, sentiment, color = method)) +
+  geom_col() +
+  facet_wrap(~ method, scales = "free", ncol = 1) + 
+  theme(legend.position = "hide")
+```
+
+
+### n-grams
+
+##### Question 1
+
+```{r}
+twograms <- books %>% filter(author == "Twain, Mark") %>%
+  unnest_tokens(twogram, text, token = "ngrams", n = 2) %>%
+  count(twogram, sort = TRUE)
+```
+
+
+##### Question 2
+
+```{r}
+head(twograms, 10)
+```
+
+
+##### Question 3
+
+```{r, warning=FALSE}
+twograms_cleansed <- twograms %>% separate(twogram, c("word1", "word2")) %>%
+  anti_join(stop_words, by = c("word1" = "word")) %>%
+  anti_join(stop_words, by = c("word2" = "word"))
+
+head(twograms_cleansed, 10)
+```
+
+
+##### Question 4
+
+```{r, warning=FALSE}
+(graph <- twograms_cleansed %>% filter(n > 10) %>% graph_from_data_frame())
+```
+
+
+##### Question 5
+
+```{r}
+ggraph(graph, layout = "fr") +
+  geom_edge_link() +
+  geom_node_point() +
+  geom_node_text(aes(label = name), vjust = 1, hjust = 1)+
+  theme_graph()
+```
+
+
+### Topic Modeling - Latent Dirichlet Allocation (LDA)
+
+##### Question 1
+
+```{r}
+by_chapter <- books %>% filter(author != "Dumas, Alexandre") %>%
+  group_by(title) %>%
+  mutate(chapter = cumsum(as.numeric(str_detect(text, regex("^chapter ", ignore_case = TRUE))))) %>%
+  ungroup() %>%
+  filter(chapter > 0) %>%
+  unite(document, title, chapter)
+
+# split into words
+by_chapter_word <- by_chapter %>%
+  unnest_tokens(word, text)
+
+# find document-word counts
+word_counts <- by_chapter_word %>%
+  anti_join(stop_words, by = "word") %>%
+  count(document, word, sort = TRUE) %>%
+  ungroup()
+
+word_counts %>% head(10) 
+
+#dtm is the format we need for LDA
+chapters_dtm <- word_counts %>%
+  cast_dtm(document, word, n)
+
+chapters_dtm
+```
+
+
+##### Question 2
+
+```{r}
+LDA <- LDA(
+  chapters_dtm,
+  k = 6, # number of different books
+  control = list(seed = 1234)
+)
+```
+
+
+##### Question 3
+
+```{r}
+LDA_wordprob <- tidy(LDA, matrix = "beta")
+```
+
+
+##### Question 4
+
+```{r}
+(LDA_mostprob <- LDA_wordprob %>%
+  group_by(topic) %>%
+  slice_max(beta, n = 5))
+```
+
+
+##### Question 5
+
+```{r}
+ggplot(LDA_mostprob, aes(reorder(term, beta), beta, fill = topic)) +
+  geom_col() +
+  facet_wrap(~ topic, scales = "free") +
+  coord_flip() +
+  theme(legend.position = "hide")
+```
+
+
+##### Question 6
+
+```{r}
+(LDA_pertopicprob <- tidy(LDA, matrix = "gamma"))
+```
+
+
+##### Question 7
+
+```{r}
+chapters_gamma <- LDA_pertopicprob %>%
+  separate(document, c("title", "chapter"), sep = "_", convert = TRUE)
+
+chapters_gamma %>% head(10)
+```
+
+
+##### Question 8
+
+```{r}
+(highest_gamma <- chapters_gamma %>%
+  group_by(title, chapter) %>%
+  slice_max(gamma, n = 1) %>%   # 'top_n' has been superseded by 'slice_max'
+  ungroup())
+```
+
+
+##### Question 9
+
+```{r}
+book_topics <- highest_gamma %>%
+  count(title, topic) %>%
+  group_by(title) %>%
+  top_n(1, n) %>%
+  ungroup() %>%
+  transmute(consensus = title, topic)
+
+highest_gamma %>%
+  inner_join(book_topics, by = "topic") %>%
+  filter(title != consensus)
+```
+
+
+##### Question 10
+
+```{r}
+topic_assignment <- augment(LDA) %>% count(document, .topic, term)
+slice_sample(topic_assignment, n = 20)
+```
+
+
+##### Question 11
+
+```{r}
+assignments <- topic_assignment %>%
+  separate(document, c("title", "chapter"), sep = "_", convert = TRUE) %>%
+  inner_join(book_topics, by = c(".topic" = "topic"))
+
+assignments %>% 
+  slice_sample(n = 20)
+```
+
+
+##### Question 12
+
+```{r}
+assignments %>%
+  count(title, consensus, wt = n) %>%
+  group_by(title) %>%
+  mutate(percent = n / sum(n)) %>%
+  ggplot(aes(consensus, title, fill = percent)) +
+  geom_tile() +
+  scale_fill_gradient2(high = "red", label = percent_format()) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1),
+        panel.grid = element_blank()) +
+  labs(x = "Book words were assigned to",
+       y = "Book words came from",
+       fill = "% of assignments")
+```
+
+
+##### Question 13
+
+Most of the books are very well-assigned (in particular, "The Adventures of Huckleberry Finn" and "The Adventures of Tom Sawyer" are almost perfectly assigned), but it seems that we fail to differentiate at all between "Through the Looking-Glass" and "Alice's Adventures in Wonderland" (though we at least do not confuse them with other books).

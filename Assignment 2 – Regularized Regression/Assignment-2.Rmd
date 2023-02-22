@@ -1,0 +1,247 @@
+---
+title: "Exercise 2"
+author: 'Yotam Nir'
+date: "17 4 2021"
+output:
+  html_document:
+    toc: yes
+    toc_float: yes
+    toc_depth: 4
+    code_folding: show
+---
+
+```{r setup, include=FALSE, warning=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Linear Regression
+### Preface
+We cannot use the data for prediction without assumptions, because some assumptions regarding the data generating process are needed in order to give credibility to the external validity of our results.
+
+#### Separability
+The addition of interactions (and in general of additional variables which are functions of original variables) increases the variance of the estimates, thus decreasing their credibility when making predictions.
+
+#### Normal Distribution of $E(u|X)$
+##### 1
+  * $E(u|X) = 0$: the assumption that the expectation of $u$ is zero is innocuous, and can be ensured by choosing the right constant (i.e. $\beta_0$). The assumption that $u$ is mean independent of $X$ is stronger and is never likely to be correct, since there are always likely to be certain unobserved variables that are correlated both with $y$ and with one of the $x$'s. A popular example is "ability bias" in Mincer equations.
+  * Normal distribution: this is often a reasonable assumption, both asymptotically and because a random variable that is constructed from a variety of other random variables, such as $u$, tends to be normally distributed. Still, we could imagine a particularly dominant factor in $u$ the distribution of which is not normal and which doesn't quickly converge asymptotically to normal.
+  * Heteroskedasticity: homoskedasticity does not seem to be a reasonable default assumption. It is often even necessarily wrong, as in the case of binary outcome variables.
+
+##### 2 
+Conditional on the $x$'s, the variance of $y$ is just that of $u$ (since it is the only random variable left). And since the $\beta$s are a linear function of $y$, this means that they too are normally distributed.
+
+### Data
+##### 1
+```{r Loading Packages and Wine Data, results='hide', message=FALSE}
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load(tidyverse, DataExplorer, tidymodels, kableExtra, ROCit, glmnet)
+winequality <- read.csv("winequality_red.csv") %>%
+  as_tibble()
+```
+
+##### 2
+```{r Wine Plots}
+plot_histogram(winequality)
+plot_boxplot(winequality, by = "quality")
+```
+
+### Model
+##### 1
+```{r Wine train/test split}
+set.seed(100)
+winequality_split <- winequality %>%
+  initial_split(prop = 0.7)
+wine_train <- training(winequality_split)
+wine_test <- testing(winequality_split)
+```
+
+##### 2
+```{r Wine linear model}
+wine_lin <- linear_reg() %>%
+  set_engine("lm")
+wine_fit <- wine_lin %>%
+  fit(quality ~ ., data = wine_train)
+wine_fit %>% tidy()
+```
+
+##### 3
+```{r Wine predictions of linear model}
+wine_pred <- wine_fit %>%
+  predict(new_data = wine_test) %>%
+  bind_cols(wine_test) %>%
+  select(quality, .pred)
+head(round(wine_pred))
+```
+
+##### 4
+```{r Wine measures}
+wine_pred %>%
+  rmse(quality, .pred)
+
+wine_pred %>%
+  mae(quality, .pred)
+
+wine_pred %>%
+  rsq_trad(quality, .pred)
+```
+
+##### 5
+The coefficients' confidence intervals are a measure of the model's variance, while the RMSE is a measure of how much of the variation in $y$ the model can account for. A narrow confidence interval is useful for demonstrating the relationship between two variables, but it might still not account for some other influences on $y$ and therefore does not guarantee good prediction. A low RMSE, on the other hand, does not say much about the relationship between two variables, but is good for prediction.
+
+## Logistic Regression
+We can use linear regression for binary outcomes – for example, the linear probability model, where the $\hat{y}$ represents the probability assigned to the outcome conditional on the x's (even though it is not technically bounded between 0 and 1).
+
+### Data
+##### 1
+```{r Loading heart data}
+heart <- read.csv("heart.csv") %>%
+  as_tibble()
+head(heart)
+```
+
+##### 2
+```{r Heart Plots}
+plot_histogram(heart)
+```
+
+#### Linear Regression
+##### 1
+```{r Heart train/test split}
+heart_split <- heart %>%
+  initial_split(prop = 0.7)
+heart_train <- training(heart_split)
+heart_test <- testing(heart_split)
+```
+
+##### 2
+```{r Heart linear model}
+heart_lin <- linear_reg() %>%
+  set_engine("lm")
+heart_fit <- heart_lin %>%
+  fit(target ~ ., data = heart_train)
+heart_fit %>% tidy()
+```
+
+##### 3
+```{r Heart predictions of linear model}
+heart_pred <- heart_fit %>%
+  predict(new_data = heart_test) %>%
+  bind_cols(heart_test) %>%
+  select(target, .pred)
+heart_pred %>%
+  filter(.pred %in% range(.pred))
+```
+Numbers below 0 or above 1 cannot represent probabilities.
+
+##### 4
+```{r ROC curve}
+rocit(score = heart_pred$.pred, class = heart_pred$target) %>%
+  plot()
+```
+
+#### Logistic Regression
+##### 1
+```{r Heart logistic model}
+logit_model <- glm(formula = target ~ ., family = "binomial", data = heart_train)
+logit_model %>% tidy()
+
+```
+
+##### 2
+```{r Heart predictions of logistic model}
+logit_heart_pred <- logit_model %>%
+  predict(heart_test, type = "response") %>%
+  bind_cols(heart_test) %>%
+  select(target, ...1)
+logit_heart_pred %>%
+  filter(...1 %in% range(...1))
+```
+This time, the numbers are bounded between 0 and 1, as we would like them to be.
+
+##### 3
+We can calculate these measures with respect to a particular classification rule. We will use 0.8 here, in keeping with the optimal (Youden Index) point suggested here:
+```{r ROC curve logit}
+rocit(score = logit_heart_pred$...1, class = logit_heart_pred$target) %>%
+    plot()
+```
+
+```{r Sensitivity Specificity and Accuracy}
+class_rule <- 0.8
+logit_heart_pred <- logit_heart_pred %>%
+  mutate(
+    .fitted_class = if_else(...1 < class_rule, 0, 1),
+    .fitted_class = as_factor(.fitted_class) ,
+    target = as_factor(target)
+  )
+heart_conf_mat <- logit_heart_pred %>%
+  conf_mat(target, .fitted_class)
+heart_conf_mat %>%
+  summary() %>%
+  filter(.metric %in% c("accuracy", "sens", "spec")) %>% 
+  mutate("1-.estimate" = 1 - .estimate)
+```
+
+## Regularization
+### Ridge
+##### 1
+If we hadn't done so, positive and negative coefficients would have cancelled each other out to some extent, leading to an under-representation of the model's complexity.
+
+##### 2
+This is due to the penalty function used in ridge – a Euclidean norm – which creates a rounded "budget constraint".
+
+### Heart Data
+
+##### 1
+```{r Ridge glmnet plot}
+heart_mat <- heart_train %>%
+  as.matrix()
+Y_heart <- heart_mat[,14]
+X_heart <- heart_mat[,1:13]
+fit_ridge <- glmnet(X_heart, Y_heart, alpha = 0)
+plot(fit_ridge, xvar = "lambda", label = TRUE)
+```
+
+##### 2
+```{r Ridge cv, message=FALSE}
+cv_ridge <- cv.glmnet(X_heart, Y_heart, alpha = 0)
+plot(cv_ridge, xvar = "lambda", label = TRUE)
+```
+
+##### 3
+```{r Extracting ridge coefficients, message=FALSE}
+coef(cv_ridge, s = "lambda.min") %>%
+  tidy() %>%
+  as_tibble()
+```
+
+##### 4
+This generates bias, due to some of the covariate's effect being wrongly attributed to the explanatory variable that was included.
+
+##### 5
+```{r Ridge prediction, message=FALSE}
+heart_test_mat <- heart_test %>%
+  as.matrix()
+X_heart_test <- heart_test_mat[,1:13]
+ridge_pred <- predict(cv_ridge, s = "lambda.min", newx = X_heart_test, type = "response") %>%
+  bind_cols(heart_test) %>%
+  rename(lambda.min = ...1)
+ridge_pred <- predict(cv_ridge, s = "lambda.1se", newx = X_heart_test, type = "response") %>%
+  bind_cols(ridge_pred) %>%
+  rename(lambda.1se = ...1)
+cbind(ridge_pred[,1:2], logit_heart_pred$...1) # (lambda.1se, lambda.min, logit)
+```
+I am afraid it is not clear in what sense we should compare the results.
+
+##### 6
+```{r Ridge confusion matrices}
+ridge_pred <- ridge_pred %>%
+  mutate(
+    class_1se = if_else(lambda.1se < 0.5, 0, 1),
+    class_1se = as_factor(class_1se),
+    class_min = if_else(lambda.min < 0.5, 0, 1),
+    class_min = as_factor(class_min),
+    target = as_factor(target)
+  )
+conf_mat(ridge_pred, target, class_min)
+conf_mat(ridge_pred, target, class_1se)
+```

@@ -1,0 +1,359 @@
+---
+title: "Exercise 3"
+author: 'Yotam Nir'
+date: "9 5 2021"
+output:
+  html_document:
+    toc: yes
+    toc_float: yes
+    toc_depth: 4
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Preface
+1. When running OLS or logistic regressions, we have a particular parametric model in mind, and therefore it makes less sense to place exogenous limits on the model's complexity.
+2. Strictly speaking, we cannot (especially if this is done post-hoc). But 'interpretability' is in a sense another word for theory, and therefore if we can imagine a mechanism associated with the specified model, this of course increases the likelihood that the model does in fact map a causal relationship.
+
+### Libraries and Data
+```{r load packages and data, results='hide', message=FALSE}
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load(tidyverse,
+               magrittr,
+               tidymodels,
+               caret,
+               DALEX,
+               rpart,
+               rattle,
+               rpart.plot,
+               RColorBrewer,
+               ada,
+               doParallel,
+               pROC,
+               e1071,
+               gbm,
+               randomForest)
+heart <- read.csv("C:/Users/user/Dropbox/תשפא/Machine Learning/Machine-Learning-for-Economists/Exercise-2/heart.csv") %>%
+  as_tibble() %>%
+  mutate(target = as.factor(target))
+
+set.seed(167)
+heart_split <- heart %>%
+  initial_split(prop = 0.7)
+heart_train <- training(heart_split)
+heart_test <- testing(heart_split)
+```
+
+### Trees
+They are path dependent due to the "greedy" algorithm according to which they work. All splits occur within previous splits and do not adjust decisions from previous steps. Trees suffer from overfitting because the choice of splits is driven purely by RSS minimization, which will tend to be unique to particular data sets (and with a larger number of splits this problem is compounded).
+
+##### Question 1
+```{r}
+formula_part <- target ~ sex + cp + chol
+formula_full <- target ~ .
+```
+
+##### Question 2
+```{r}
+tree_fit <- rpart(
+  formula_part,
+  data = heart_train,
+  method = "class"
+)
+fancyRpartPlot(tree_fit, caption = NULL)
+```
+
+##### Question 3
+```{r}
+model1 <- rpart(
+  formula_full,
+  data = heart_train,
+  method = "class",
+  control = rpart.control(minsplit = 2, minbucket = 1)
+)
+model2 <- rpart(
+  formula_full,
+  data = heart_train,
+  method = "class"
+)
+printcp(model1) # uses 9 different variables
+printcp(model2) # uses 4 different variables
+```
+The rpart function has higher minimal splits and buckets by default (20 and 7, respectively), and therefore the second model uses less variables than the first (4 and not 9).
+
+
+##### Question 4
+```{r,  message=FALSE}
+# Generating predictions based on both models for train and test sets
+pred_model1_train <- predict(model1, heart_train, type = "class")
+pred_model2_train <- predict(model2, heart_train, type = "class")
+pred_model1_test <- predict(model1, heart_test, type = "class")
+pred_model2_test <- predict(model2, heart_test, type = "class")
+
+# Generating corresponding confusion matrices
+train_confmat1 <- bind_cols(heart_train$target, pred_model1_train) %>%
+  conf_mat(...1, ...2)
+train_confmat2 <- bind_cols(heart_train$target, pred_model2_train) %>%
+  conf_mat(...1, ...2)
+test_confmat1 <- bind_cols(heart_test$target, pred_model1_test) %>%
+  conf_mat(...1, ...2)
+test_confmat2 <- bind_cols(heart_test$target, pred_model2_test) %>%
+  conf_mat(...1, ...2)
+
+# Summarizing confusion matrices' accuracy
+train_confmat1 %>%
+  summary() %>%
+  filter(.metric %in% c("accuracy", "sens", "spec")) %>% 
+  mutate("1-.estimate" = 1 - .estimate)
+train_confmat2 %>%
+  summary() %>%
+  filter(.metric %in% c("accuracy", "sens", "spec")) %>% 
+  mutate("1-.estimate" = 1 - .estimate)
+test_confmat1 %>%
+  summary() %>%
+  filter(.metric %in% c("accuracy", "sens", "spec")) %>% 
+  mutate("1-.estimate" = 1 - .estimate)
+test_confmat2 %>%
+  summary() %>%
+  filter(.metric %in% c("accuracy", "sens", "spec")) %>% 
+  mutate("1-.estimate" = 1 - .estimate)
+```
+
+We can see that the first, more complex model predicts better in the training set, but not in the test set. This probably reflects an overfit from the deeper splits in the first model, which are not well suited to out-of-sample predictions. The second model also suffers from overfit, as can be understood from the lower accuracy of both models w.r.t. the test set.
+
+##### Question 5
+```{r}
+model1_prune <- prune(model1, cp = 0.03)
+model2_prune <- prune(model2, cp = 0.03)
+```
+
+First we can note that using the same complexity parameter trims both models down to a level at which they are identical:
+```{r}
+rpart.plot(model1_prune)
+rpart.plot(model2_prune)
+```
+
+So we can use them interchangeably in prediction:
+```{r,  message=FALSE}
+# Model predictions in train and test sets
+pred_prune_train <- predict(model1_prune, heart_train, type = "class")
+pred_prune_test <- predict(model1_prune, heart_test, type = "class")
+
+# Generating confusion matrices
+train_confmat_prune <- bind_cols(heart_train$target, pred_prune_train) %>%
+  conf_mat(...1, ...2)
+test_confmat_prune <- bind_cols(heart_test$target, pred_prune_test) %>%
+  conf_mat(...1, ...2)
+
+# Summarizing accuracy
+train_confmat_prune %>%
+  summary() %>%
+  filter(.metric %in% c("accuracy", "sens", "spec")) %>% 
+  mutate("1-.estimate" = 1 - .estimate)
+test_confmat_prune %>%
+  summary() %>%
+  filter(.metric %in% c("accuracy", "sens", "spec")) %>% 
+  mutate("1-.estimate" = 1 - .estimate)
+```
+
+This time, while the accuracy is still lower w.r.t. the test set, it is very close, suggesting that there is much less overfit.
+
+### K-Nearest Neighbors (KNN)
+```{r}
+fitControl <- trainControl(
+  method = "repeatedcv",
+  number = 5,
+  repeats = 3
+)
+```
+
+### Fitting a Model
+##### Question 1
+```{r, results='hide'}
+KNN <- train(
+  formula_full,
+  data = heart_train,
+  method = "knn",
+  trControl = fitControl
+)
+bagging <- train(
+  formula_full,
+  data = heart_train,
+  method = "ada",
+  trControl = fitControl
+)
+boosting <- train(
+  formula_full,
+  data = heart_train,
+  method = "gbm",
+  trControl = fitControl
+)
+RF <- train(
+  formula_full,
+  data = heart_train,
+  method = "rf",
+  trControl = fitControl
+)
+```
+
+##### Question 2
+```{r}
+ggplot(KNN)
+ggplot(bagging)
+ggplot(boosting)
+ggplot(RF)
+```
+
+##### Question 3
+```{r}
+boosting_grid <- expand.grid(
+  interaction.depth = c(1,5,9),
+  n.trees = (1:30)*50,
+  shrinkage = 0.1,
+  n.minobsinnode = 20
+)
+```
+
+##### Question 4
+```{r, results=FALSE, message=FALSE, warning=FALSE}
+new_boosting <- train(
+  formula_full,
+  data = heart_train,
+  method = "gbm",
+  trControl = fitControl,
+  tuneGrid = boosting_grid
+)
+```
+
+##### Question 5
+```{r}
+gridExtra::grid.arrange(ggplot(new_boosting),ggplot(boosting), ncol = 2)
+```
+
+
+### Interpretability
+
+##### Question 1
+```{r}
+KNN_explainer <- explain(
+  KNN,
+  label = "knn",
+  x = heart_train %>% select(-target),
+  y = as.numeric(as.character(heart_train$target))
+)
+bagging_explainer <- explain(
+  bagging,
+  label = "ada",
+  x = heart_train %>% select(-target),
+  y = as.numeric(as.character(heart_train$target))
+)
+boosting_explainer <- explain(
+  new_boosting,
+  label = "gbm",
+  x = heart_train %>% select(-target),
+  y = as.numeric(as.character(heart_train$target))
+)
+RF_explainer <- explain(
+  RF,
+  label = "rf",
+  x = heart_train %>% select(-target),
+  y = as.numeric(as.character(heart_train$target))
+)
+```
+
+##### Question 2
+```{r}
+KNN_mp <- model_performance(KNN_explainer)
+bagging_mp <- model_performance(bagging_explainer)
+boosting_mp <- model_performance(boosting_explainer)
+RF_mp <- model_performance(RF_explainer)
+
+line <- plot(KNN_mp, bagging_mp, boosting_mp, RF_mp)
+box <- plot(KNN_mp, bagging_mp, boosting_mp, RF_mp, geom = "boxplot")
+gridExtra::grid.arrange(line, box, ncol = 2)
+```
+
+The reverse cumulative distribution of the residuals describes what percent of the predictions of each model are above a certain distance of the true value. For example, 47.4% of the KNN model's predictions are more than 20 percentage points away (in terms of assigned probability) from their true value.
+The boxplot describes the same data in boxplot form.
+
+##### Question 3
+```{r}
+KNN_vip <- variable_importance(KNN_explainer)
+bagging_vip <- variable_importance(bagging_explainer)
+boosting_vip <- variable_importance(boosting_explainer)
+RF_vip <- variable_importance(RF_explainer)
+
+plot(KNN_vip, bagging_vip, boosting_vip, RF_vip)
+```
+
+The variables with the longest bars are the most significant to the models' predictive ability in terms of their contributions to the models' AUCs. (Note that while there are similarities across models, the order in which the variables are presented is fixed by the first model graphed and does not reflect the exact order of importance for the next three.)
+
+##### Question 4
+```{r}
+# Note: the 'variable_effect' function is outdated, replaced by 'model_profile'
+KNN_ve <- model_profile(KNN_explainer)
+bagging_ve <- model_profile(bagging_explainer)
+boosting_ve <- model_profile(boosting_explainer)
+RF_ve <- model_profile(RF_explainer)
+
+plot(KNN_ve, bagging_ve, boosting_ve, RF_ve)
+```
+
+The partial dependence plots show the models' average predictions conditional on particular levels of each variable. For example, the predicted value of 'target' is increasing in the variable 'thalach' in the KNN model, but quite stable in 'thalach' in the other models.
+
+##### Question 5
+```{r}
+heart_row <- heart_train[1,]
+KNN_breakdown <- predict_parts_break_down(KNN_explainer, new_observation = heart_row)
+bagging_breakdown <- predict_parts_break_down(bagging_explainer, new_observation = heart_row)
+boosting_breakdown <- predict_parts_break_down(boosting_explainer, new_observation = heart_row)
+RF_breakdown <- predict_parts_break_down(RF_explainer, new_observation = heart_row)
+
+gridExtra::grid.arrange(
+  plot(KNN_breakdown),
+  plot(bagging_breakdown),
+  plot(boosting_breakdown),
+  plot(RF_breakdown),
+  ncol = 2
+)
+```
+
+
+
+##### Question 6
+```{r}
+KNN_pred <- predict(KNN, newdata = heart_test)
+bagging_pred <- predict(bagging, newdata = heart_test)
+boosting_pred <- predict(boosting, newdata = heart_test)
+RF_pred <- predict(RF, newdata = heart_test)
+```
+
+##### Question 7
+```{r, message=FALSE}
+KNN_roc <- bind_cols(fct_rev(heart_test$target), as.numeric(KNN_pred)) %>%
+  roc_curve(...1, ...2) %>%
+  mutate(model = "knn")
+bagging_roc <- bind_cols(fct_rev(heart_test$target), as.numeric(bagging_pred)) %>%
+  roc_curve(...1, ...2) %>%
+  mutate(model = "ada")
+boosting_roc <- bind_cols(fct_rev(heart_test$target), as.numeric(boosting_pred)) %>%
+  roc_curve(...1, ...2) %>%
+  mutate(model = "gbm")
+RF_roc <- bind_cols(fct_rev(heart_test$target), as.numeric(RF_pred)) %>%
+  roc_curve(...1, ...2) %>%
+  mutate(model = "rf")
+
+rbind(KNN_roc, bagging_roc, boosting_roc, RF_roc) %>%
+  ggplot(aes(x = 1 - specificity, y = sensitivity, color = model)) +
+  geom_path() +
+  geom_abline(lty = 3)
+```
+```{r, message=FALSE}
+bind_cols(fct_rev(heart_test$target), as.numeric(boosting_pred)) %>%
+  roc_auc(...1, ...2)
+```
+
+The AUC of the boosting model is 0.791.
