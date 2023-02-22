@@ -9,8 +9,8 @@ Exercises related to the Machine Learning for Economists course in the Economics
 
 [Kaggle Assignment](https://raw.githack.com/yotamnir/Machine-Learning-for-Economists/main/Kaggle/Kaggle.html)
 
-[Assignment 4: Double Lasso](https://raw.githack.com/yotamnir/Machine-Learning-for-Economists/main/Assignment%20%E2%80%93%20Double%20Lasso/Double-Lasso-Assignment.html)
+[Assignment 4: Double Lasso](https://raw.githack.com/yotamnir/Machine-Learning-for-Economists/main/Assignment%204%20%E2%80%93%20Double%20Lasso/Double-Lasso-Assignment.html)
 
-[Assignment 5: Text Mining](https://raw.githack.com/yotamnir/Machine-Learning-for-Economists/main/Assignment%20%E2%80%93%20Text%20Mining/Text-Mining-Assignment.html)
+[Assignment 5: Text Mining](https://raw.githack.com/yotamnir/Machine-Learning-for-Economists/main/Assignment%205%20%E2%80%93%20Text%20Mining/Text-Mining-Assignment.html)
 
 [Final Project](https://raw.githack.com/yotamnir/Machine-Learning-for-Economists/main/Final%20Project/Final-Project.html)
